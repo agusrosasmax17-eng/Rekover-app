@@ -1,17 +1,23 @@
 /* =========================================================
    REKOVER — Pantallas y acciones
    Cada pantalla es una función que devuelve HTML.
-   Cuando algo cambia, se vuelve a dibujar todo con dibujar().
+   Cuando algo cambia, se vuelve a dibujar todo con dibujar()
+   y se guarda en el servidor (ver servidor.js).
    ========================================================= */
 
-let datos = cargarDatos();
-let perfil = armarPerfil(cargarSesion());
+import * as servidor from './servidor.js';
+
+// Copia en memoria de lo que esta persona puede ver (se trae del servidor al ingresar)
+let datos = { alumnas: [], rutinas: {}, registros: [], encuestas: [], notasProgreso: {}, ejerciciosPropios: {}, evaluaciones: {} };
+let perfil = null;
+let cargando = true; // mientras se conecta con el servidor
 
 // Estado de la pantalla (qué pestaña está abierta, qué alumna está elegida, etc.)
 const ui = {
   pestana: null,
   errorIngreso: '',         // mensaje si el usuario o la contraseña no coinciden
-  creandoClave: null,       // id de la alumna que está creando su contraseña (primer ingreso)
+  errorAlumna: '',          // mensaje si no se pudo crear una alumna
+  ocupado: false,           // mientras se espera una respuesta del servidor
   seccionAlumna: 'rutina',  // en la ficha de la alumna: 'rutina' o 'evaluacion'
   agregandoTest: false,     // si está abierto el formulario para sumar un test
   testElegido: TESTS[0][0], // test elegido en ese formulario ('otro' = crear uno propio)
@@ -37,7 +43,39 @@ function esc(texto) {
   return String(texto ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function guardar() { guardarDatos(datos); }
+// Guarda en el servidor la ficha de una alumna (rutina, evaluación y mensaje).
+// Espera medio segundo para juntar varios toques seguidos de − / + en un solo guardado.
+const guardadosPendientes = {};
+function guardarFicha(alumnaId) {
+  clearTimeout(guardadosPendientes[alumnaId]);
+  guardadosPendientes[alumnaId] = setTimeout(() => {
+    delete guardadosPendientes[alumnaId];
+    servidor.guardarFicha(alumnaId, {
+      rutinas: datos.rutinas[alumnaId] || {},
+      notaProgreso: datos.notasProgreso[alumnaId] || '',
+      evaluacion: datos.evaluaciones[alumnaId] || null
+    }).catch(mostrarError);
+  }, 500);
+}
+
+// Traduce los errores del servidor a mensajes simples
+function mensajeError(e) {
+  const codigo = e?.code || '';
+  if (['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found', 'auth/invalid-email', 'rekover/no-existe'].includes(codigo))
+    return 'El usuario o la contraseña no coinciden. Revisalos e intentá de nuevo.';
+  if (codigo === 'auth/too-many-requests') return 'Hubo demasiados intentos. Esperá unos minutos y probá de nuevo.';
+  if (codigo === 'auth/network-request-failed' || codigo === 'unavailable') return 'No hay conexión a internet. Revisala e intentá de nuevo.';
+  if (codigo === 'rekover/sin-ficha') return 'Tu cuenta no tiene una ficha asignada. Consultá con tu profe.';
+  if (codigo === 'rekover/dni-repetido') return 'Ya hay una alumna con ese DNI.';
+  if (codigo === 'auth/requires-recent-login') return 'Por seguridad, salí y volvé a entrar con tu código para crear la contraseña.';
+  if (codigo === 'permission-denied') return 'No tenés permiso para hacer esto.';
+  if (codigo === 'auth/configuration-not-found' || codigo === 'auth/operation-not-allowed')
+    return 'El ingreso con correo y contraseña no está activado en Firebase.';
+  console.error(e);
+  return 'Algo salió mal. Intentá de nuevo en un momento.';
+}
+
+function mostrarError(e) { mostrarAviso(mensajeError(e)); }
 
 // Muestra un mensajito abajo por un par de segundos ("Guardado", etc.)
 function mostrarAviso(texto) {
@@ -47,16 +85,6 @@ function mostrarAviso(texto) {
   aviso.classList.add('visible');
   clearTimeout(mostrarAviso.t);
   mostrarAviso.t = setTimeout(() => aviso.classList.remove('visible'), 1800);
-}
-
-// Arma los datos de la persona que ingresó a partir de su id
-function armarPerfil(id) {
-  if (!id) return null;
-  const usuario = datos.usuarios.find(u => u.id === id);
-  if (usuario) return { id, rol: usuario.rol, nombre: usuario.nombre };
-  const alumna = datos.alumnas.find(a => a.id === id);
-  if (alumna) return { id, rol: 'alumna', nombre: alumna.nombre, alumnaId: alumna.id };
-  return null;
 }
 
 function numero(n) { return String(Math.round(n * 10) / 10).replace('.', ','); }
@@ -80,7 +108,7 @@ function rutinaDe(alumnaId, dia) {
 // Ejercicios de un músculo: los de la lista base más los que creó el profesor
 function ejerciciosDe(disciplina, musculo) {
   const propios = datos.ejerciciosPropios[disciplina]?.[musculo] || [];
-  return [...CATALOGO[disciplina][musculo], ...propios.map(([n, p]) => [n, p, true])];
+  return [...CATALOGO[disciplina][musculo], ...propios.map(e => [e.nombre, e.peso, true])];
 }
 
 // Isologotipo (K + texto): según el manual de marca, es la variante principal.
@@ -92,7 +120,9 @@ function logo(chico) {
 /* ---------- Dibujo general ---------- */
 
 function dibujar() {
+  if (cargando) { app.innerHTML = `<section class="ingreso">${logo(false)}<p class="suave">Cargando…</p></section>`; return; }
   if (!perfil) { app.innerHTML = pantallaIngreso(); return; }
+  if (perfil.debeCambiarClave) { app.innerHTML = pantallaCrearClave(); return; }
   let contenido = '';
   if (perfil.rol === 'alumna') contenido = pantallaAlumna();
   if (perfil.rol === 'profesor') contenido = pantallaProfesor();
@@ -127,7 +157,6 @@ function menuInferior() {
 /* ---------- Ingreso ---------- */
 
 function pantallaIngreso() {
-  if (ui.creandoClave) return pantallaCrearClave();
   return `<section class="ingreso">
     ${logo(false)}
     <p class="ingreso-bajada">Sports Recovery</p>
@@ -139,22 +168,21 @@ function pantallaIngreso() {
       <label class="campo">Contraseña
         <input name="clave" type="password" autocomplete="current-password" placeholder="Tu contraseña">
       </label>
-      <p class="nota-chica">¿Es tu primera vez? Escribí tu DNI, dejá la contraseña vacía y tocá Ingresar.</p>
+      <p class="nota-chica">¿Es tu primera vez? Escribí tu DNI y, como contraseña, el código de 8 números que te dio tu profe.</p>
       ${ui.errorIngreso ? `<p class="error">${esc(ui.errorIngreso)}</p>` : ''}
-      <button type="submit" class="boton ancho">Ingresar</button>
+      <button type="submit" class="boton ancho" ${ui.ocupado ? 'disabled' : ''}>${ui.ocupado ? 'Ingresando…' : 'Ingresar'}</button>
     </form>
-    <button class="boton-texto reiniciar" data-accion="reiniciar">Volver a los datos de ejemplo</button>
   </section>`;
 }
 
 // Primer ingreso de una alumna: crea su propia contraseña
 function pantallaCrearClave() {
-  const alumna = alumnaPorId(ui.creandoClave);
+  const alumna = alumnaPorId(perfil.alumnaId);
   return `<section class="ingreso">
     ${logo(false)}
     <p class="ingreso-bajada">Sports Recovery</p>
     <h1>Hola, ${esc(alumna.nombre.split(' ')[0])}</h1>
-    <p class="suave">Es tu primer ingreso. Creá tu contraseña: la vas a usar junto con tu DNI cada vez que entres.</p>
+    <p class="suave">Es tu primer ingreso. Creá tu contraseña: desde ahora la vas a usar junto con tu DNI y el código ya no va a servir.</p>
     <form class="form-ingreso" data-form="crear-clave">
       <label class="campo">Nueva contraseña
         <input name="clave" type="password" required minlength="6" autocomplete="new-password" placeholder="Mínimo 6 caracteres">
@@ -163,9 +191,9 @@ function pantallaCrearClave() {
         <input name="repetir" type="password" required minlength="6" autocomplete="new-password" placeholder="La misma de arriba">
       </label>
       ${ui.errorIngreso ? `<p class="error">${esc(ui.errorIngreso)}</p>` : ''}
-      <button type="submit" class="boton ancho">Crear contraseña y entrar</button>
+      <button type="submit" class="boton ancho" ${ui.ocupado ? 'disabled' : ''}>${ui.ocupado ? 'Guardando…' : 'Crear contraseña y entrar'}</button>
     </form>
-    <button class="boton-texto" data-accion="cancelar-clave">‹ Volver</button>
+    <button class="boton-texto" data-accion="salir">‹ Volver</button>
   </section>`;
 }
 
@@ -390,24 +418,26 @@ function profesorAlumnas() {
       return `<button class="tarjeta fila-alumna" data-accion="elegir-alumna" data-valor="${a.id}">
         <span class="perfil-inicial">${esc(a.nombre[0])}</span>
         <span class="crece"><strong>${esc(a.nombre)}</strong><small>${esc(a.disciplina)} · ${dias} ${dias === 1 ? 'día' : 'días'} con rutina</small>
-          ${a.clave ? '' : '<em class="etiqueta-propio">Falta su primer ingreso</em>'}</span>
+          ${a.debeCambiarClave ? '<em class="etiqueta-propio">Falta su primer ingreso</em>' : ''}</span>
         <span class="flecha">›</span>
       </button>`;
-    }).join('') || '<div class="tarjeta vacio">No hay alumnas en esta disciplina.</div>'}
+    }).join('') || (datos.alumnas.length ? '<div class="tarjeta vacio">No hay alumnas en esta disciplina.</div>'
+      : `<div class="tarjeta vacio"><p>Todavía no cargaste alumnas.</p>
+          <button class="boton secundario" data-accion="cargar-ejemplo" ${ui.ocupado ? 'disabled' : ''}>${ui.ocupado ? 'Cargando…' : 'Cargar 3 alumnas de ejemplo para probar'}</button></div>`)}
     ${ui.nuevaAlumna ? `
       <form class="tarjeta" data-form="nueva-alumna">
         <h3>Nueva alumna</h3>
         <label class="campo">Nombre y apellido<input name="nombre" required maxlength="40" placeholder="Ej.: Ana Torres"></label>
         <label class="campo">DNI (sin puntos) — es su usuario para ingresar
           <input name="dni" required inputmode="numeric" pattern="[0-9]{7,8}" maxlength="8" placeholder="Ej.: 35123456"></label>
-        <p class="nota-chica">La contraseña la crea ella la primera vez que entra con su DNI.</p>
+        <p class="nota-chica">La app genera un código de primer ingreso. Ella entra con su DNI y ese código, y crea su propia contraseña.</p>
         <label class="campo">Disciplina
           <select name="disciplina">${DISCIPLINAS.map(d => `<option>${d}</option>`).join('')}</select>
         </label>
         ${ui.errorAlumna ? `<p class="error">${esc(ui.errorAlumna)}</p>` : ''}
         <div class="fila-botones">
           <button type="button" class="boton secundario" data-accion="cerrar-nueva-alumna">Cancelar</button>
-          <button type="submit" class="boton">Agregar</button>
+          <button type="submit" class="boton" ${ui.ocupado ? 'disabled' : ''}>${ui.ocupado ? 'Creando…' : 'Agregar'}</button>
         </div>
       </form>`
     : '<button class="boton secundario ancho" data-accion="abrir-nueva-alumna">+ Nueva alumna</button>'}`;
@@ -420,10 +450,15 @@ function profesorFichaAlumna() {
   return `<button class="boton-texto volver" data-accion="volver">‹ Alumnas</button>
     <h1>${esc(alumna.nombre)}</h1>
     <p class="suave">${esc(alumna.disciplina)} · DNI ${esc(alumna.dni)}</p>
+    ${alumna.debeCambiarClave ? `
+      <div class="tarjeta codigo-ingreso">
+        <small>Código de primer ingreso</small>
+        <b>${esc(alumna.codigoInicial)}</b>
+        <p>Pasáselo a ${esc(alumna.nombre.split(' ')[0])}: entra con su DNI y este código, y crea su propia contraseña.</p>
+      </div>` : ''}
     <div class="cuenta">
-      ${alumna.clave
-        ? `<span>Contraseña creada por ella</span><button class="boton-texto" data-accion="restablecer-clave">Restablecer</button>`
-        : `<span>Todavía no entró: crea su contraseña en su primer ingreso con el DNI.</span>`}
+      <span>${alumna.debeCambiarClave ? 'Todavía no creó su contraseña.' : 'Contraseña creada por ella.'}</span>
+      <button class="boton-texto" data-accion="restablecer-clave" ${ui.ocupado ? 'disabled' : ''}>${alumna.debeCambiarClave ? 'Generar otro código' : 'Restablecer'}</button>
     </div>
     <div class="pestanas-internas">${secciones.map(([id, texto]) =>
       `<button class="${ui.seccionAlumna === id ? 'activa' : ''}" data-accion="seccion-alumna" data-valor="${id}">${texto}</button>`).join('')}
@@ -592,16 +627,15 @@ app.addEventListener('click', ev => {
   const b = ev.target.closest('[data-accion]');
   if (!b || b.disabled) return;
   const v = b.dataset.valor;
+  // Al cambiar de pantalla, se vuelve arriba de todo
+  if (['pestana', 'elegir-alumna', 'volver', 'seccion-alumna'].includes(b.dataset.accion)) window.scrollTo(0, 0);
 
   switch (b.dataset.accion) {
     case 'salir':
-      perfil = null; guardarSesion(null); ui.errorIngreso = ''; ui.creandoClave = null;
-      break;
-    case 'cancelar-clave': ui.creandoClave = null; ui.errorIngreso = ''; break;
-    case 'reiniciar':
-      if (!confirm('¿Borrar los cambios y volver a los datos de ejemplo?')) return;
-      borrarDatos(); datos = cargarDatos();
-      mostrarAviso('Datos de ejemplo restaurados'); return;
+      ui.errorIngreso = '';
+      servidor.salir(); // al cerrar la sesión, alCambiarSesion vuelve a la pantalla de ingreso
+      return;
+    case 'cargar-ejemplo': cargarEjemplo(); return;
     case 'pestana':
       ui.pestana = v; ui.alumnaId = null; ui.agregando = false; ui.creando = false; ui.registrando = null;
       ui.dia = new Date().getDay(); ui.estrellas = 0; ui.comentario = '';
@@ -624,15 +658,19 @@ app.addEventListener('click', ev => {
     case 'seccion-alumna': ui.seccionAlumna = v; ui.agregandoTest = false; break;
     case 'restablecer-clave': {
       const alumna = alumnaPorId(ui.alumnaId);
-      if (!confirm(`¿Restablecer la contraseña de ${alumna.nombre}? La próxima vez que entre con su DNI va a crear una nueva.`)) return;
-      alumna.clave = null;
-      guardar(); mostrarAviso('Contraseña restablecida'); return;
+      if (!confirm(`¿Generar un código nuevo para ${alumna.nombre}? Su contraseña o código actual dejan de servir, y con el nuevo código crea otra contraseña.`)) return;
+      ui.ocupado = true; dibujar();
+      servidor.restablecer(alumna)
+        .then(codigo => { alumna.codigoInicial = codigo; alumna.debeCambiarClave = true; mostrarAviso('Código nuevo generado'); })
+        .catch(mostrarError)
+        .finally(() => { ui.ocupado = false; dibujar(); });
+      return;
     }
     case 'abrir-test': ui.agregandoTest = true; ui.testElegido = TESTS[0][0]; break;
     case 'cerrar-test': ui.agregandoTest = false; break;
     case 'quitar-test':
       datos.evaluaciones[ui.alumnaId].tests.splice(Number(v), 1);
-      guardar();
+      guardarFicha(ui.alumnaId);
       break;
     case 'abrir-nueva-alumna': ui.nuevaAlumna = true; ui.errorAlumna = ''; break;
     case 'cerrar-nueva-alumna': ui.nuevaAlumna = false; break;
@@ -644,17 +682,17 @@ app.addEventListener('click', ev => {
     case 'agregar': {
       const alumna = alumnaPorId(ui.alumnaId);
       rutinaDe(alumna.id, ui.dia).push(itemRutina(alumna.disciplina, v, 3, 10, Number(b.dataset.peso), 60, ui.musculo));
-      guardar(); mostrarAviso('Ejercicio agregado'); return;
+      guardarFicha(alumna.id); mostrarAviso('Ejercicio agregado'); return;
     }
     case 'quitar':
       rutinaDe(ui.alumnaId, ui.dia).splice(Number(v), 1);
-      guardar();
+      guardarFicha(ui.alumnaId);
       break;
     case 'paso': {
       const ej = rutinaDe(ui.alumnaId, ui.dia)[Number(b.dataset.indice)];
       const campo = b.dataset.campo;
       ej[campo] = Math.max(MINIMOS[campo], ej[campo] + Number(b.dataset.delta) * PASOS[campo]);
-      guardar();
+      guardarFicha(ui.alumnaId);
       break;
     }
   }
@@ -668,7 +706,7 @@ app.addEventListener('change', ev => {
   if (cambio === 'test-resultado') {
     const test = datos.evaluaciones[ui.alumnaId].tests[Number(ev.target.dataset.indice)];
     test.resultado = Math.max(0, Number(ev.target.value) || 0);
-    guardar(); mostrarAviso('Resultado guardado');
+    guardarFicha(ui.alumnaId); mostrarAviso('Resultado guardado');
   }
 });
 
@@ -688,24 +726,25 @@ app.addEventListener('submit', ev => {
   const num = (nombre, min) => Math.max(min, Number(campos.get(nombre)) || 0);
 
   if (f.dataset.form === 'ingreso') {
-    const resultado = buscarIngreso(datos, String(campos.get('usuario')), String(campos.get('clave')));
-    ui.errorIngreso = '';
-    if (!resultado) ui.errorIngreso = 'El usuario o la contraseña no coinciden. Revisalos e intentá de nuevo.';
-    else if (resultado.crearClave) ui.creandoClave = resultado.crearClave;
-    else entrar(resultado.id);
-    dibujar();
+    ui.errorIngreso = ''; ui.ocupado = true; dibujar();
+    // Si los datos coinciden, alCambiarSesion se encarga de traer los datos y mostrar la app
+    servidor.ingresar(String(campos.get('usuario')), String(campos.get('clave')))
+      .catch(e => { ui.errorIngreso = mensajeError(e); })
+      .finally(() => { ui.ocupado = false; dibujar(); });
   }
 
   if (f.dataset.form === 'crear-clave') {
     const clave = String(campos.get('clave'));
+    ui.errorIngreso = '';
     if (clave.length < 6) ui.errorIngreso = 'La contraseña tiene que tener al menos 6 caracteres.';
     else if (clave !== campos.get('repetir')) ui.errorIngreso = 'Las dos contraseñas no son iguales. Escribilas de nuevo.';
     else {
-      alumnaPorId(ui.creandoClave).clave = clave;
-      guardar();
-      entrar(ui.creandoClave);
-      ui.creandoClave = null; ui.errorIngreso = '';
-      mostrarAviso('Contraseña creada. ¡Bienvenida!'); return;
+      ui.ocupado = true; dibujar();
+      servidor.cambiarClave(perfil.alumnaId, clave)
+        .then(() => { perfil.debeCambiarClave = false; mostrarAviso('Contraseña creada. ¡Bienvenida!'); })
+        .catch(e => { ui.errorIngreso = mensajeError(e); })
+        .finally(() => { ui.ocupado = false; dibujar(); });
+      return;
     }
     dibujar();
   }
@@ -722,27 +761,40 @@ app.addEventListener('submit', ev => {
     datos.registros = datos.registros.filter(r => !(r.alumnaId === perfil.alumnaId && r.nombre === ej.nombre && r.fecha === hoy));
     datos.registros.push(registro);
     ui.registrando = null;
-    guardar(); mostrarAviso('Registro guardado. Sumaste progreso');
+    mostrarAviso('Registro guardado. Sumaste progreso');
+    servidor.guardarRegistro(perfil.alumnaId, registro).catch(mostrarError);
   }
 
   if (f.dataset.form === 'encuesta') {
     if (!ui.estrellas) return;
-    datos.encuestas.push({ area: f.dataset.area, autor: perfil.nombre, fecha: fechaISO(), puntaje: ui.estrellas, comentario: String(campos.get('comentario') || '').trim().slice(0, 300) });
+    const respuesta = { area: f.dataset.area, autor: perfil.nombre, alumnaId: perfil.alumnaId, fecha: fechaISO(), puntaje: ui.estrellas, comentario: String(campos.get('comentario') || '').trim().slice(0, 300) };
+    datos.encuestas.push(respuesta);
     ui.estrellas = 0; ui.comentario = '';
-    guardar(); mostrarAviso('Gracias. Tu respuesta ya llegó');
+    mostrarAviso('Gracias. Tu respuesta ya llegó');
+    servidor.agregarEncuesta(respuesta).catch(mostrarError);
   }
 
   if (f.dataset.form === 'nueva-alumna') {
     const nombre = String(campos.get('nombre') || '').trim();
     const dni = String(campos.get('dni') || '').replace(/\D/g, '');
     if (!nombre || !dni) return;
-    if (datos.alumnas.some(a => a.dni === dni) || datos.usuarios.some(u => u.usuario === dni)) {
-      ui.errorAlumna = 'Ya hay una persona con ese DNI.'; dibujar(); return;
-    }
-    // Sin contraseña: la crea ella en su primer ingreso
-    datos.alumnas.push({ id: 'a' + Date.now(), nombre, disciplina: campos.get('disciplina'), dni, clave: null });
-    ui.nuevaAlumna = false; ui.errorAlumna = '';
-    guardar(); mostrarAviso('Alumna creada. Ya puede entrar con su DNI');
+    if (datos.alumnas.some(a => a.dni === dni)) { ui.errorAlumna = 'Ya hay una alumna con ese DNI.'; dibujar(); return; }
+    const disciplina = String(campos.get('disciplina'));
+    ui.ocupado = true; ui.errorAlumna = ''; dibujar();
+    // Se crea con un código de primer ingreso; ella después crea su contraseña
+    servidor.crearAlumna({ nombre, dni, disciplina })
+      .then(({ id, codigo }) => {
+        datos.alumnas.push({ id, nombre, dni, disciplina, debeCambiarClave: true, codigoInicial: codigo });
+        datos.alumnas.sort((a, b) => a.nombre.localeCompare(b.nombre));
+        datos.rutinas[id] = {};
+        ui.nuevaAlumna = false;
+        // Abre su ficha, donde se ve el código para pasárselo
+        ui.alumnaId = id; ui.seccionAlumna = 'rutina'; ui.dia = new Date().getDay();
+        window.scrollTo(0, 0);
+        mostrarAviso('Alumna creada');
+      })
+      .catch(e => { ui.errorAlumna = mensajeError(e); })
+      .finally(() => { ui.ocupado = false; dibujar(); });
   }
 
   if (f.dataset.form === 'crear-ejercicio') {
@@ -753,10 +805,13 @@ app.addEventListener('submit', ev => {
     const porMusculo = datos.ejerciciosPropios[alumna.disciplina] || (datos.ejerciciosPropios[alumna.disciplina] = {});
     const lista = porMusculo[ui.musculo] || (porMusculo[ui.musculo] = []);
     // Queda guardado en la lista para usarlo con cualquier alumna
-    if (!ejerciciosDe(alumna.disciplina, ui.musculo).some(e => e[0].toLowerCase() === nombre.toLowerCase())) lista.push([nombre, peso]);
+    if (!ejerciciosDe(alumna.disciplina, ui.musculo).some(e => e[0].toLowerCase() === nombre.toLowerCase())) {
+      lista.push({ nombre, peso });
+      servidor.guardarEjerciciosPropios(datos.ejerciciosPropios).catch(mostrarError);
+    }
     rutinaDe(alumna.id, ui.dia).push(itemRutina(alumna.disciplina, nombre, 3, 10, peso, 60, ui.musculo));
     ui.creando = false;
-    guardar(); mostrarAviso('Ejercicio creado y agregado');
+    guardarFicha(alumna.id); mostrarAviso('Ejercicio creado y agregado');
   }
 
   if (f.dataset.form === 'evaluacion') {
@@ -768,7 +823,7 @@ app.addEventListener('submit', ev => {
     ev.altura = Number(campos.get('altura')) || null;
     ev.antecedentes = String(campos.get('antecedentes') || '').trim();
     ev.observaciones = String(campos.get('observaciones') || '').trim();
-    guardar(); mostrarAviso('Evaluación guardada');
+    guardarFicha(ui.alumnaId); mostrarAviso('Evaluación guardada');
   }
 
   if (f.dataset.form === 'nuevo-test') {
@@ -781,25 +836,55 @@ app.addEventListener('submit', ev => {
       resultado: num('resultado', 0), nota: String(campos.get('nota') || '').trim()
     });
     ui.agregandoTest = false;
-    guardar(); mostrarAviso('Test agregado');
+    guardarFicha(ui.alumnaId); mostrarAviso('Test agregado');
   }
 
   if (f.dataset.form === 'nota') {
     const nota = String(campos.get('nota') || '').trim().slice(0, 400);
     if (nota) datos.notasProgreso[ui.alumnaId] = nota;
     else delete datos.notasProgreso[ui.alumnaId];
-    guardar(); mostrarAviso('Mensaje guardado');
+    guardarFicha(ui.alumnaId); mostrarAviso('Mensaje guardado');
   }
 });
 
-// Abre la sesión de una persona y la lleva a su primera pestaña
-function entrar(id) {
-  perfil = armarPerfil(id);
-  guardarSesion(id);
-  ui.pestana = PESTANAS[perfil.rol][0][0];
-  ui.alumnaId = null; ui.dia = new Date().getDay(); ui.estrellas = 0; ui.comentario = '';
+// Carga en el servidor las alumnas de ejemplo (cada una con su código de primer ingreso)
+async function cargarEjemplo() {
+  if (!confirm('¿Cargar 3 alumnas de ejemplo (datos inventados) en el servidor?')) return;
+  ui.ocupado = true; dibujar();
+  try {
+    for (const ejemplo of alumnasDeEjemplo()) {
+      if (datos.alumnas.some(a => a.dni === ejemplo.dni)) continue;
+      const { registros = [], ...ficha } = ejemplo;
+      const { nombre, dni, disciplina, ...extra } = ficha;
+      const { id, codigo } = await servidor.crearAlumna({ nombre, dni, disciplina }, extra);
+      for (const registro of registros) await servidor.guardarRegistro(id, registro);
+      datos.alumnas.push({ id, nombre, dni, disciplina, debeCambiarClave: true, codigoInicial: codigo });
+      datos.rutinas[id] = extra.rutinas || {};
+      if (extra.notaProgreso) datos.notasProgreso[id] = extra.notaProgreso;
+      if (extra.evaluacion) datos.evaluaciones[id] = extra.evaluacion;
+    }
+    datos.alumnas.sort((a, b) => a.nombre.localeCompare(b.nombre));
+    mostrarAviso('Alumnas de ejemplo cargadas');
+  } catch (e) { mostrarError(e); }
+  ui.ocupado = false; dibujar();
 }
 
-// Si había una sesión abierta, entra directo a la primera pestaña
-if (perfil) ui.pestana = PESTANAS[perfil.rol][0][0];
+// Cada vez que alguien entra o sale, se traen sus datos y se dibuja la pantalla que le toca
+servidor.alCambiarSesion(async usuario => {
+  if (!usuario) { perfil = null; cargando = false; dibujar(); return; }
+  cargando = true; dibujar();
+  try {
+    const resultado = await servidor.cargar(usuario);
+    datos = resultado.datos;
+    perfil = resultado.perfil;
+    ui.pestana = PESTANAS[perfil.rol][0][0];
+    ui.alumnaId = null; ui.dia = new Date().getDay(); ui.estrellas = 0; ui.comentario = ''; ui.errorIngreso = '';
+  } catch (e) {
+    ui.errorIngreso = mensajeError(e);
+    perfil = null;
+    servidor.salir();
+  }
+  cargando = false; dibujar();
+});
+
 dibujar();

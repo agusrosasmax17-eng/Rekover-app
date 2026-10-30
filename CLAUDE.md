@@ -8,7 +8,10 @@ La dueña del proyecto **no sabe programar**: explicar siempre todo en **españo
 - Solo **HTML, CSS y JavaScript**, sin herramientas de compilación (nada de npm, bundlers, frameworks que haya que compilar).
 - `index.html` va en la **raíz** del repositorio. Se publica con **GitHub Pages desde la rama `main`**.
 - Diseño **primero para celular** (mobile first).
-- Por ahora los datos se guardan en el navegador (**localStorage**), con **datos de ejemplo inventados**. **Nada de datos reales.**
+- Los datos se guardan en **Firebase** (plan gratis Spark): ingreso con **Firebase Authentication** (correo y contraseña) y datos en **Cloud Firestore** (São Paulo). La librería se carga desde `https://www.gstatic.com/firebasejs/10.14.1/` (sin instalar nada).
+- Por ahora solo **datos de ejemplo inventados**. **Nada de datos reales** hasta tener el consentimiento de las personas y la consulta legal (Ley 25.326: los datos de salud son sensibles).
+- La seguridad la dan las reglas de `firestore.rules`: si se cambian, hay que pegarlas de nuevo en Firebase → Firestore Database → Reglas → Publicar.
+- Nunca poner en el repositorio claves privadas o "cuentas de servicio" de Firebase. La configuración de `js/config.js` es pública y está bien que esté.
 
 ## Marca (respetarla siempre)
 
@@ -65,7 +68,8 @@ Rekover es **Sports Recovery**. El PDF del manual es confidencial: no subirlo al
 
 - Hecho:
   - Ingreso con usuario o DNI y contraseña (la pantalla no muestra datos de nadie).
-  - El profesor crea a la alumna (nombre, DNI, disciplina) sin contraseña; ella crea su contraseña en su primer ingreso. El profesor puede restablecerla.
+  - El profesor crea a la alumna (nombre, DNI, disciplina). La app genera un **código de primer ingreso** de 8 números; la alumna entra con DNI + código y crea su propia contraseña. "Restablecer" genera un código nuevo (crea una cuenta nueva en Firebase y la vieja pierde el acceso).
+  - Si no hay alumnas, el profesor puede cargar 3 alumnas de ejemplo con un botón.
   - Evaluación inicial por alumna (datos, objetivo, nivel, antecedentes, observaciones y tests/ejercicios con resultado; el profesor puede crear tests propios). La alumna la ve en Progreso, sin poder cambiarla.
   - Gimnasio para Musculación y Funcional. El profesor puede repetir ejercicios y crear ejercicios propios.
   - La alumna registra series, repeticiones, peso y pausa.
@@ -74,22 +78,27 @@ Rekover es **Sports Recovery**. El PDF del manual es confidencial: no subirlo al
 - Pilates: "Próximamente".
 - Pendiente: sección Kinesiología (turnos, sesiones, encuesta de kinesiología).
 
-## Usuarios de prueba (inventados)
+## Cuentas
 
-| Perfil | Usuario o DNI | Contraseña |
-| --- | --- | --- |
-| Profesor (Lucas Pérez) | `profesor` | `rekover123` |
-| Alumna (Sofía Gómez) | `30111222` | `sofia123` |
-| Paciente (Martín López) | `28333444` | `martin123` |
+- **Profesor**: se ingresa con el usuario `profesor`. Por dentro es la cuenta `profesor@rekover.app`, creada a mano en Firebase → Authentication → Users (la contraseña la eligió la dueña). Ese correo está en `js/config.js` y en `firestore.rules`.
+- **Alumnas**: ingresan con su DNI. Por dentro, Firebase les asigna un correo inventado (`DNI.algo@alumnas.rekover.app`) que se busca en `accesos/{dni}`.
+- **Paciente**: todavía no tiene cuenta (Kinesiología es el próximo paso).
 
-Otras alumnas: Valentina `31222333` / `vale123`, Lucía `32444555` / `lucia123`.
-Martina `33555666` todavía no tiene contraseña: sirve para probar el primer ingreso.
-Las contraseñas quedan en el navegador sin protección: es solo un prototipo. Para datos reales hará falta un servidor con ingreso seguro.
+## Cómo están guardados los datos (Firestore)
+
+- `accesos/{dni}` → qué cuenta usa cada DNI.
+- `alumnas/{id}` → nombre, DNI, disciplina, cuenta (`uid`), código de primer ingreso, rutinas, evaluación inicial y mensaje del profe.
+- `alumnas/{id}/registros/{fecha_ejercicio}` → lo que registró la alumna.
+- `encuestas/{id}` → respuestas de la encuesta.
+- `config/ejercicios` → ejercicios propios del profesor.
 
 ## Cómo está organizado el código
 
 - `index.html` — la página principal.
 - `css/estilos.css` — colores, tipografías y diseño.
-- `js/datos.js` — datos de ejemplo y funciones para guardar/leer del navegador.
+- `js/datos.js` — listas fijas (ejercicios, tests, días) y alumnas de ejemplo.
+- `js/config.js` — configuración pública de Firebase y correo del profesor.
+- `js/servidor.js` — todo lo que se lee o guarda en Firebase.
 - `js/app.js` — las pantallas y lo que pasa al tocar cada botón.
+- `firestore.rules` — reglas de seguridad de la base de datos.
 - `img/` — logos e ícono de la marca.

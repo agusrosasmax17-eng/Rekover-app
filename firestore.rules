@@ -1,0 +1,66 @@
+rules_version = '2';
+
+// =========================================================
+// REKOVER — Reglas de seguridad de la base de datos (Firestore)
+// Deciden quién puede leer o cambiar cada dato, aunque alguien
+// intente saltearse la app. Se copian y pegan en:
+// Firebase → Firestore Database → Reglas → Publicar.
+// =========================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // El profesor es la cuenta con este correo (el mismo de js/config.js)
+    function esProfe() {
+      return request.auth != null && request.auth.token.email == 'profesor@rekover.app';
+    }
+
+    // La persona que ingresó es la dueña de la ficha de esa alumna
+    function esLaAlumna(alumnaId) {
+      return request.auth != null
+        && get(/databases/$(database)/documents/alumnas/$(alumnaId)).data.uid == request.auth.uid;
+    }
+
+    // Qué cuenta usa cada DNI para ingresar. Se puede consultar un DNI puntual
+    // (hace falta antes de ingresar), pero nadie puede ver la lista completa.
+    match /accesos/{dni} {
+      allow get: if true;
+      allow list: if false;
+      allow write: if esProfe();
+    }
+
+    // Ficha de cada alumna: el profesor ve y cambia todo; cada alumna solo lee la suya
+    // y lo único que puede cambiar es marcar que ya creó su contraseña.
+    match /alumnas/{alumnaId} {
+      allow read: if esProfe() || (request.auth != null && resource.data.uid == request.auth.uid);
+      allow create, delete: if esProfe();
+      allow update: if esProfe() || (
+        request.auth != null
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['debeCambiarClave', 'codigoInicial'])
+        && request.resource.data.debeCambiarClave == false
+      );
+
+      // Lo que la alumna registra cada día
+      match /registros/{registroId} {
+        allow read, write: if esProfe() || esLaAlumna(alumnaId);
+      }
+    }
+
+    // Encuestas: cada alumna crea las suyas y solo ve las suyas; el profesor ve todas
+    match /encuestas/{encuestaId} {
+      allow read: if esProfe() || (request.auth != null && resource.data.uid == request.auth.uid);
+      allow create: if request.auth != null
+        && request.resource.data.uid == request.auth.uid
+        && esLaAlumna(request.resource.data.alumnaId);
+      allow update, delete: if esProfe();
+    }
+
+    // Ejercicios propios del profesor
+    match /config/{documento} {
+      allow read, write: if esProfe();
+    }
+
+    // Todo lo demás está cerrado
+  }
+}

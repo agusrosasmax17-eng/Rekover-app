@@ -1,10 +1,8 @@
 /* =========================================================
-   REKOVER — Datos de ejemplo y guardado en el navegador
-   Todos los datos son INVENTADOS. Nada de datos reales.
+   REKOVER — Listas fijas y datos de ejemplo
+   Los datos de verdad se guardan en el servidor (ver servidor.js).
+   Los ejemplos son INVENTADOS: sirven para probar la app.
    ========================================================= */
-
-const CLAVE_DATOS = 'rekover_datos_v3';
-const CLAVE_SESION = 'rekover_sesion_v3';
 
 // Disciplinas activas. Pilates aparece como "Próximamente".
 const DISCIPLINAS = ['Musculación', 'Funcional'];
@@ -77,51 +75,10 @@ function itemRutina(disciplina, nombre, series, reps, peso, pausa, musculo) {
   return { nombre, musculo: musculo || musculoDe(disciplina, nombre), series, reps, peso, pausa };
 }
 
-// Crea todos los datos de ejemplo desde cero
-function crearDatosDeEjemplo() {
+// Alumnas de ejemplo que el profesor puede cargar en el servidor para probar.
+// Cada una se crea con su código de primer ingreso, como una alumna real.
+function alumnasDeEjemplo() {
   const M = 'Musculación', F = 'Funcional';
-
-  // Profesor y paciente. Las alumnas entran con su DNI (más abajo).
-  // El profesor crea a la alumna SIN contraseña: ella la crea en su primer ingreso (clave: null).
-  // OJO: en este prototipo las contraseñas quedan guardadas en el navegador sin protección.
-  // Sirven para probar, no son seguras para datos reales.
-  const usuarios = [
-    { id: 'profe',    rol: 'profesor', nombre: 'Lucas Pérez',  usuario: 'profesor', clave: 'rekover123' },
-    { id: 'paciente', rol: 'paciente', nombre: 'Martín López', usuario: '28333444', clave: 'martin123' }
-  ];
-
-  const alumnas = [
-    { id: 'a1', nombre: 'Sofía Gómez',     disciplina: M, dni: '30111222', clave: 'sofia123' },
-    { id: 'a2', nombre: 'Valentina Ruiz',  disciplina: F, dni: '31222333', clave: 'vale123' },
-    { id: 'a4', nombre: 'Lucía Fernández', disciplina: M, dni: '32444555', clave: 'lucia123' },
-    { id: 'a5', nombre: 'Martina Sosa',    disciplina: F, dni: '33555666', clave: null } // todavía no entró
-  ];
-
-  // Rutinas: para cada alumna, una lista de ejercicios por día de la semana
-  const rutinas = {
-    a1: {
-      1: [itemRutina(M, 'Press de banca', 4, 10, 32.5, 90), itemRutina(M, 'Press inclinado con mancuernas', 3, 12, 10, 60),
-          itemRutina(M, 'Tríceps en polea', 3, 12, 15, 60), itemRutina(M, 'Plancha', 3, 30, 0, 45)],
-      2: [itemRutina(M, 'Sentadilla', 4, 10, 45, 120), itemRutina(M, 'Hip thrust', 4, 12, 60, 90),
-          itemRutina(M, 'Curl femoral', 3, 12, 20, 60)],
-      3: [itemRutina(M, 'Jalón al pecho', 4, 10, 32.5, 90), itemRutina(M, 'Remo con mancuerna', 3, 12, 12, 60),
-          itemRutina(M, 'Curl con barra', 3, 10, 15, 60)],
-      4: [itemRutina(M, 'Press militar', 4, 10, 20, 90), itemRutina(M, 'Elevaciones laterales', 3, 15, 5, 45),
-          itemRutina(M, 'Crunch abdominal', 3, 20, 0, 45)],
-      5: [itemRutina(M, 'Sentadilla', 4, 8, 47.5, 120), itemRutina(M, 'Press de banca', 3, 8, 35, 90),
-          itemRutina(M, 'Hip thrust', 3, 10, 65, 90), itemRutina(M, 'Remo con barra', 3, 10, 25, 90)]
-    },
-    a2: {
-      1: [itemRutina(F, 'Sentadilla goblet', 4, 12, 12, 60), itemRutina(F, 'Burpees', 3, 10, 0, 45), itemRutina(F, 'Plancha lateral', 3, 30, 0, 30)],
-      3: [itemRutina(F, 'Swing con kettlebell', 4, 15, 12, 60), itemRutina(F, 'Flexiones de brazos', 3, 10, 0, 45)],
-      5: [itemRutina(F, 'Estocadas', 3, 12, 6, 60), itemRutina(F, 'Mountain climbers', 3, 30, 0, 30)]
-    },
-    a4: {
-      1: [itemRutina(M, 'Prensa de piernas', 4, 12, 90, 90), itemRutina(M, 'Extensión de cuádriceps', 3, 12, 25, 60)],
-      4: [itemRutina(M, 'Press de banca', 4, 10, 25, 90), itemRutina(M, 'Jalón al pecho', 4, 10, 30, 90)]
-    },
-    a5: {}
-  };
 
   // Historial inventado de Sofía: 8 semanas de registros para que los gráficos tengan datos
   const registros = [];
@@ -141,81 +98,52 @@ function crearDatosDeEjemplo() {
     historial.forEach(([nombre, pesoInicial, pesoFinal, repsMin, repsMax, series, pausa], i) => {
       const peso = Math.round((pesoInicial + (pesoFinal - pesoInicial) * avance) / 2.5) * 2.5;
       const reps = repsMin + ((semana + i) % (repsMax - repsMin + 1));
-      registros.push({ alumnaId: 'a1', nombre, fecha: fechaISO(dia), series, reps, peso, pausa });
+      registros.push({ nombre, fecha: fechaISO(dia), series, reps, peso, pausa });
     });
   }
 
-  const encuestas = [
-    { area: 'gimnasio', autor: 'Valentina Ruiz',  fecha: fechaISO(new Date(hoy.getTime() - 5 * 864e5)), puntaje: 5, comentario: 'Me encantan las clases de funcional.' },
-    { area: 'gimnasio', autor: 'Lucía Fernández', fecha: fechaISO(new Date(hoy.getTime() - 3 * 864e5)), puntaje: 4, comentario: 'Muy buena atención, sumaría más horarios.' }
-  ];
-
-  // Mensaje del profesor sobre el progreso de cada alumna
-  const notasProgreso = {
-    a1: 'Muy buen avance: en 8 semanas subiste 12,5 kg en sentadilla sin perder técnica. Próximo objetivo: 50 kg con 8 repeticiones.'
-  };
-
-  // Ejercicios que crea el profesor: { disciplina: { músculo: [[nombre, peso]] } }
-  const ejerciciosPropios = {};
-
-  // Evaluación inicial que carga el profesor para cada alumna
-  const evaluaciones = {
-    a1: {
-      fecha: registros[0].fecha, pesoCorporal: 62, altura: 165,
-      objetivo: 'Fuerza', nivel: 'Principiante',
-      antecedentes: 'Esguince de tobillo derecho hace 2 años, sin dolor actual.',
-      observaciones: 'Buena movilidad de cadera. Trabajar técnica de sentadilla antes de subir cargas.',
-      tests: [
-        { nombre: 'Sentadilla: peso máximo (1RM estimado)', unidad: 'kg', resultado: 45, nota: 'Técnica correcta hasta 40 kg' },
-        { nombre: 'Flexiones de brazos máximas', unidad: 'reps', resultado: 8, nota: 'Con rodillas apoyadas' },
-        { nombre: 'Plancha (tiempo máximo)', unidad: 'seg', resultado: 50, nota: '' },
-        { nombre: 'Salto vertical', unidad: 'cm', resultado: 28, nota: '' }
-      ]
+  return [
+    {
+      nombre: 'Sofía Gómez', dni: '30111222', disciplina: M, registros,
+      rutinas: {
+        1: [itemRutina(M, 'Press de banca', 4, 10, 32.5, 90), itemRutina(M, 'Press inclinado con mancuernas', 3, 12, 10, 60),
+            itemRutina(M, 'Tríceps en polea', 3, 12, 15, 60), itemRutina(M, 'Plancha', 3, 30, 0, 45)],
+        2: [itemRutina(M, 'Sentadilla', 4, 10, 45, 120), itemRutina(M, 'Hip thrust', 4, 12, 60, 90),
+            itemRutina(M, 'Curl femoral', 3, 12, 20, 60)],
+        3: [itemRutina(M, 'Jalón al pecho', 4, 10, 32.5, 90), itemRutina(M, 'Remo con mancuerna', 3, 12, 12, 60),
+            itemRutina(M, 'Curl con barra', 3, 10, 15, 60)],
+        4: [itemRutina(M, 'Press militar', 4, 10, 20, 90), itemRutina(M, 'Elevaciones laterales', 3, 15, 5, 45),
+            itemRutina(M, 'Crunch abdominal', 3, 20, 0, 45)],
+        5: [itemRutina(M, 'Sentadilla', 4, 8, 47.5, 120), itemRutina(M, 'Press de banca', 3, 8, 35, 90),
+            itemRutina(M, 'Hip thrust', 3, 10, 65, 90), itemRutina(M, 'Remo con barra', 3, 10, 25, 90)]
+      },
+      notaProgreso: 'Muy buen avance: en 8 semanas subiste 12,5 kg en sentadilla sin perder técnica. Próximo objetivo: 50 kg con 8 repeticiones.',
+      evaluacion: {
+        fecha: registros[0].fecha, pesoCorporal: 62, altura: 165, objetivo: 'Fuerza', nivel: 'Principiante',
+        antecedentes: 'Esguince de tobillo derecho hace 2 años, sin dolor actual.',
+        observaciones: 'Buena movilidad de cadera. Trabajar técnica de sentadilla antes de subir cargas.',
+        tests: [
+          { nombre: 'Sentadilla: peso máximo (1RM estimado)', unidad: 'kg', resultado: 45, nota: 'Técnica correcta hasta 40 kg' },
+          { nombre: 'Flexiones de brazos máximas', unidad: 'reps', resultado: 8, nota: 'Con rodillas apoyadas' },
+          { nombre: 'Plancha (tiempo máximo)', unidad: 'seg', resultado: 50, nota: '' },
+          { nombre: 'Salto vertical', unidad: 'cm', resultado: 28, nota: '' }
+        ]
+      }
+    },
+    {
+      nombre: 'Valentina Ruiz', dni: '31222333', disciplina: F,
+      rutinas: {
+        1: [itemRutina(F, 'Sentadilla goblet', 4, 12, 12, 60), itemRutina(F, 'Burpees', 3, 10, 0, 45), itemRutina(F, 'Plancha lateral', 3, 30, 0, 30)],
+        3: [itemRutina(F, 'Swing con kettlebell', 4, 15, 12, 60), itemRutina(F, 'Flexiones de brazos', 3, 10, 0, 45)],
+        5: [itemRutina(F, 'Estocadas', 3, 12, 6, 60), itemRutina(F, 'Mountain climbers', 3, 30, 0, 30)]
+      }
+    },
+    {
+      nombre: 'Lucía Fernández', dni: '32444555', disciplina: M,
+      rutinas: {
+        1: [itemRutina(M, 'Prensa de piernas', 4, 12, 90, 90), itemRutina(M, 'Extensión de cuádriceps', 3, 12, 25, 60)],
+        4: [itemRutina(M, 'Press de banca', 4, 10, 25, 90), itemRutina(M, 'Jalón al pecho', 4, 10, 30, 90)]
+      }
     }
-  };
-
-  return { usuarios, alumnas, rutinas, registros, encuestas, notasProgreso, ejerciciosPropios, evaluaciones };
-}
-
-// Busca a la persona que quiere ingresar.
-// Profesor y paciente entran con su usuario; las alumnas, con su DNI.
-// Devuelve { id } si todo coincide, { crearClave: id } si es una alumna
-// que todavía no creó su contraseña, o null si no coincide.
-function buscarIngreso(datos, usuario, clave) {
-  const u = usuario.trim().toLowerCase().replace(/\./g, '');
-  const encontrado = datos.usuarios.find(x => x.usuario.toLowerCase() === u)
-    || datos.alumnas.find(x => x.dni === u);
-  if (!encontrado) return null;
-  if (!encontrado.clave) return { crearClave: encontrado.id };
-  return encontrado.clave === clave ? { id: encontrado.id } : null;
-}
-
-// Lee los datos del navegador; si no hay, crea los de ejemplo
-function cargarDatos() {
-  try {
-    const guardado = localStorage.getItem(CLAVE_DATOS);
-    if (guardado) return JSON.parse(guardado);
-  } catch (e) { /* si falla, usamos los de ejemplo */ }
-  const datos = crearDatosDeEjemplo();
-  guardarDatos(datos);
-  return datos;
-}
-
-function guardarDatos(datos) {
-  try { localStorage.setItem(CLAVE_DATOS, JSON.stringify(datos)); } catch (e) { /* navegador sin espacio o privado */ }
-}
-
-function borrarDatos() {
-  try { localStorage.removeItem(CLAVE_DATOS); } catch (e) { /* nada */ }
-}
-
-function cargarSesion() {
-  try { return localStorage.getItem(CLAVE_SESION); } catch (e) { return null; }
-}
-
-function guardarSesion(id) {
-  try {
-    if (id) localStorage.setItem(CLAVE_SESION, id);
-    else localStorage.removeItem(CLAVE_SESION);
-  } catch (e) { /* nada */ }
+  ];
 }

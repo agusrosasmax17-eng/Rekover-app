@@ -419,3 +419,9 @@ textarea { resize: vertical; }
 .fila-test { padding: 8px 0; border-top: 1px solid var(--borde); font-size: 14px; }
 .fila-test b { white-space: nowrap; }
 .evaluacion-obs { margin: 10px 0 0; font-size: 14px; }
+
+/* Código de primer ingreso que el profesor le pasa a la alumna */
+.codigo-ingreso { border-color: var(--oro); text-align: center; }
+.codigo-ingreso small { color: var(--texto-suave); }
+.codigo-ingreso b { display: block; font-family: var(--titulos); font-size: 32px; letter-spacing: 0.15em; color: var(--oro); margin: 4px 0; }
+.codigo-ingreso p { margin: 0; font-size: 14px; color: var(--texto-suave); }
