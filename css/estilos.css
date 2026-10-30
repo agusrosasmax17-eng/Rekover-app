@@ -1,0 +1,427 @@
+/* =========================================================
+   REKOVER — Estilos (diseño pensado primero para celular)
+   ========================================================= */
+
+/* Colores de la marca (Manual de Marca Rekover v1.0)
+   Navy oscuro: fondo dominante, headers y cards
+   Navy medio: fondos alternativos, gradientes, profundidad
+   Azul eléctrico: botones (CTAs), destacados, íconos
+   Oro: detalles premium y separadores
+   Blanco: texto sobre fondos navy */
+:root {
+  --navy: #0D2240;
+  --secundario: #1A4A7A;
+  --azul: #4AB3F4;
+  --oro: #F0A500;
+  --blanco: #FFFFFF;
+  --texto-suave: rgba(255, 255, 255, 0.68);
+  --borde: rgba(255, 255, 255, 0.12);
+  --tarjeta: rgba(26, 74, 122, 0.45);
+  --radio: 14px;
+  --titulos: 'Oswald', 'Arial Narrow', sans-serif;
+  --textos: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; }
+
+body {
+  background: var(--navy);
+  color: var(--blanco);
+  font-family: var(--textos);
+  font-size: 16px;
+  line-height: 1.45;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* Jerarquía tipográfica del manual:
+   H1 Oswald Bold blanco · H2 Oswald SemiBold · H3 Oswald Bold azul eléctrico
+   Texto Inter Regular · Notas chicas Inter Medium en gris sutil */
+h1, h2, h3 {
+  font-family: var(--titulos);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin: 0 0 6px;
+  line-height: 1.15;
+}
+h1 { font-size: 30px; text-transform: uppercase; color: var(--blanco); }
+h2 { font-size: 22px; font-weight: 600; margin-top: 22px; text-transform: uppercase; color: var(--blanco); }
+h3 { font-size: 18px; color: var(--azul); }
+small { font-weight: 500; }
+
+/* Separador oro debajo del título principal de cada pantalla */
+.contenido > h1::after {
+  content: '';
+  display: block;
+  width: 44px; height: 3px;
+  margin-top: 8px;
+  background: var(--oro);
+  border-radius: 2px;
+}
+
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+
+.suave { color: var(--texto-suave); margin: 0 0 14px; }
+.centro { text-align: center; }
+.oro { color: var(--oro); }
+
+/* ---------- Logo ----------
+   Mantiene su proporción original (nunca estirado) y lleva aire alrededor
+   ("espacio de respiro" del manual). Sin sombras ni efectos. */
+.logo { display: block; width: 260px; max-width: 75%; height: auto; margin: 16px auto; }
+.logo.logo-chico { width: 124px; max-width: none; margin: 6px 0; }
+
+/* ---------- Ingreso ---------- */
+.ingreso {
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 48px 20px 32px 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  background: radial-gradient(circle at 50% 0%, var(--secundario) 0%, var(--navy) 65%);
+}
+/* Franja azul y oro al costado, como la portada del manual */
+.ingreso::before {
+  content: '';
+  position: absolute; top: 0; bottom: 0; left: 0;
+  width: 8px;
+  background: linear-gradient(to right, var(--azul) 50%, var(--oro) 50%);
+}
+.ingreso-bajada {
+  margin: 4px 0 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--azul);
+  color: var(--azul);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+.ingreso h1 { margin-top: 36px; }
+.form-ingreso { width: 100%; text-align: left; margin: 12px 0 24px; }
+.error {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--oro);
+  background: rgba(240, 165, 0, 0.12);
+  border-radius: 8px;
+  font-size: 14px;
+}
+.reiniciar { margin-top: auto; }
+
+.perfil {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-align: left;
+  width: 100%;
+}
+.perfil strong, .fila-alumna strong { display: block; font-size: 17px; }
+.perfil small, .fila-alumna small { color: var(--texto-suave); }
+.perfil-inicial {
+  flex: none;
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--azul);
+  color: var(--navy);
+  font-family: var(--titulos);
+  font-size: 20px;
+}
+
+/* ---------- Estructura con sesión abierta ---------- */
+.encabezado {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--navy);
+  border-bottom: 2px solid var(--oro);
+}
+.encabezado-usuario { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--texto-suave); }
+
+.contenido { padding: 20px 16px 110px; }
+
+.menu-inferior {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 5;
+  max-width: 480px; margin: 0 auto;
+  display: flex;
+  background: var(--secundario);
+  border-top: 2px solid var(--oro);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.menu-inferior button {
+  flex: 1;
+  padding: 16px 4px;
+  background: none; border: 0;
+  color: var(--texto-suave);
+  font-weight: 600;
+  font-size: 15px;
+}
+.menu-inferior button.activa { color: var(--azul); box-shadow: inset 0 3px 0 var(--azul); }
+
+/* ---------- Tarjetas ---------- */
+.tarjeta {
+  display: block;
+  background: var(--tarjeta);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 16px;
+  margin-bottom: 12px;
+  color: var(--blanco);
+}
+button.tarjeta { width: 100%; text-align: left; }
+button.tarjeta:active { transform: scale(0.99); border-color: var(--azul); }
+.vacio { text-align: center; color: var(--texto-suave); padding: 26px 16px; }
+.vacio p { margin: 10px 0 0; }
+
+.tarjeta.fila-alumna, .tarjeta.perfil { display: flex; align-items: center; gap: 14px; }
+.crece { flex: 1; }
+.flecha { font-size: 28px; color: var(--azul); }
+
+/* ---------- Botones ---------- */
+.boton {
+  display: inline-block;
+  background: var(--azul);
+  color: var(--navy);
+  border: 0;
+  border-radius: 12px;
+  padding: 14px 18px;
+  font-weight: 700;
+  min-height: 48px;
+}
+.boton:active { filter: brightness(0.9); }
+.boton:disabled { opacity: 0.4; cursor: default; }
+.boton.secundario { background: transparent; color: var(--azul); border: 1.5px solid var(--azul); }
+.boton.ancho { width: 100%; }
+.boton-texto { background: none; border: 0; color: var(--azul); font-weight: 600; padding: 8px 4px; }
+.boton-icono {
+  flex: none;
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 0;
+  color: var(--texto-suave);
+}
+.volver { margin: -6px 0 6px -4px; }
+.fila-botones { display: flex; gap: 10px; }
+.fila-botones .boton { flex: 1; }
+.fila-separada { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+
+/* ---------- Chips (filtros, días, músculos) ---------- */
+.chips {
+  display: flex; gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  margin: 0 -16px 14px;
+  padding-left: 16px; padding-right: 16px;
+  scrollbar-width: none;
+}
+.chips::-webkit-scrollbar { display: none; }
+.chip {
+  flex: none;
+  position: relative;
+  padding: 9px 15px;
+  border-radius: 999px;
+  border: 1.5px solid var(--borde);
+  background: transparent;
+  color: var(--blanco);
+  font-weight: 600;
+  font-size: 14px;
+}
+.chip.activa { background: var(--azul); border-color: var(--azul); color: var(--navy); }
+.dias .chip.con-rutina:not(.activa) { border-color: var(--secundario); background: var(--secundario); }
+.punto-hoy {
+  position: absolute; top: 3px; right: 5px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--oro);
+}
+
+/* ---------- Ejercicios ---------- */
+.ejercicio-titulo { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
+.ejercicio-titulo h3 { margin: 2px 0 0; }
+.musculo { color: var(--oro); font-weight: 700; text-transform: uppercase; font-size: 11px; letter-spacing: 0.08em; }
+.ejercicio.hecho { border-color: var(--azul); }
+.check {
+  flex: none;
+  width: 32px; height: 32px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--azul); color: var(--navy); font-weight: 700;
+}
+
+.datos-ejercicio { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 14px; text-align: center; }
+.datos-ejercicio b { display: block; font-size: 16px; }
+.datos-ejercicio small { color: var(--texto-suave); font-size: 12px; }
+
+/* Ajustes rápidos del profesor: − valor + */
+.ajustes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ajuste { background: rgba(13, 34, 64, 0.55); border-radius: 12px; padding: 8px; text-align: center; }
+.ajuste small { color: var(--texto-suave); font-size: 12px; }
+.ajuste-controles { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.ajuste-controles b { font-size: 15px; white-space: nowrap; }
+.ajuste-controles button {
+  width: 40px; height: 40px;
+  flex: none;
+  border-radius: 10px;
+  border: 0;
+  background: var(--secundario);
+  color: var(--azul);
+  font-size: 22px; font-weight: 700;
+  line-height: 1;
+}
+.ajuste-controles button:active { background: var(--azul); color: var(--navy); }
+
+/* Lista para elegir ejercicios */
+.selector { border-color: var(--azul); }
+.selector .chips { margin-left: 0; margin-right: 0; padding-left: 0; padding-right: 0; }
+.lista-ejercicios { display: grid; gap: 8px; }
+.opcion {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 13px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--borde);
+  background: rgba(13, 34, 64, 0.55);
+  text-align: left;
+}
+.opcion small { color: var(--azul); font-weight: 600; white-space: nowrap; }
+.opcion.agregado { opacity: 0.45; }
+.opcion.agregado small { color: var(--texto-suave); }
+
+/* ---------- Formularios ---------- */
+.registro { display: grid; gap: 12px; }
+.registro label, .campo { display: grid; gap: 6px; font-size: 14px; color: var(--texto-suave); margin-bottom: 12px; }
+.registro label { margin: 0; }
+input, select, textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1.5px solid var(--borde);
+  background: var(--navy);
+  color: var(--blanco);
+  font-size: 16px; /* evita que el celular haga zoom */
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--azul); }
+textarea { resize: vertical; }
+
+/* ---------- Progreso ---------- */
+.resumen { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 10px; }
+.resumen .tarjeta { text-align: center; padding: 12px 8px; }
+.resumen b { display: block; font-family: var(--titulos); font-size: 22px; }
+.resumen small { color: var(--texto-suave); font-size: 12px; }
+
+.grafico { width: 100%; height: auto; display: block; margin-top: 8px; }
+.grafico text { fill: var(--texto-suave); font-size: 10px; font-family: var(--textos); }
+.grafico .guia { stroke: var(--borde); stroke-dasharray: 3 4; }
+
+/* ---------- Encuesta ---------- */
+.estrellas { display: flex; justify-content: center; gap: 6px; margin: 4px 0 16px; }
+.estrellas button { background: none; border: 0; font-size: 40px; color: rgba(255, 255, 255, 0.25); padding: 0 2px; line-height: 1; }
+.estrellas button.llena { color: var(--oro); }
+.respuesta p { margin: 8px 0 4px; }
+
+.etiqueta-oro {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--oro);
+  color: var(--navy);
+  font-weight: 700; font-size: 13px;
+}
+
+/* ---------- Mensajito temporal ---------- */
+.aviso {
+  position: fixed; left: 50%; bottom: 84px; z-index: 10;
+  transform: translate(-50%, 20px);
+  background: var(--oro); color: var(--navy);
+  font-weight: 700;
+  padding: 10px 18px;
+  border-radius: 999px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+  white-space: nowrap;
+}
+.aviso.visible { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---------- Registro de la alumna ---------- */
+.registro-titulo { margin: 0; font-weight: 600; color: var(--blanco); }
+.grilla-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.hecho-resumen {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(74, 179, 244, 0.12);
+  font-size: 14px;
+}
+
+/* ---------- Ejercicios propios del profesor ---------- */
+.etiqueta-propio {
+  font-style: normal;
+  font-size: 11px; font-weight: 700;
+  color: var(--oro);
+  border: 1px solid var(--oro);
+  border-radius: 999px;
+  padding: 1px 7px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.crear-boton { margin-top: 12px; }
+.crear-ejercicio { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--borde); display: grid; gap: 4px; }
+.crear-ejercicio .registro-titulo { margin-bottom: 8px; }
+
+/* ---------- Progreso: explicación y mensaje del profe ---------- */
+.significado p, .nota-profe p { margin: 6px 0 0; }
+.nota-profe { border-left: 3px solid var(--oro); }
+
+/* ---------- Primer ingreso y cuenta de la alumna ---------- */
+.nota-chica { margin: -4px 0 14px; font-size: 13px; font-weight: 500; color: var(--texto-suave); }
+.ingreso .suave { max-width: 320px; }
+.cuenta {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin: -4px 0 14px;
+  font-size: 13px; color: var(--texto-suave);
+}
+
+/* Pestañas dentro de la ficha de la alumna (Rutina / Evaluación inicial) */
+.pestanas-internas {
+  display: flex;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--borde);
+}
+.pestanas-internas button {
+  flex: 1;
+  padding: 12px 4px;
+  background: none; border: 0;
+  color: var(--texto-suave);
+  font-weight: 600;
+}
+.pestanas-internas button.activa { color: var(--azul); box-shadow: inset 0 -3px 0 var(--azul); }
+
+/* ---------- Evaluación inicial ---------- */
+.test strong { font-size: 15px; }
+.test-resultado { display: flex; align-items: center; gap: 10px; margin: 10px 0 4px; }
+.test-resultado input { width: 120px; font-weight: 700; }
+.test-resultado span { color: var(--texto-suave); font-weight: 600; }
+.datos-evaluacion { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.datos-evaluacion small { display: block; color: var(--texto-suave); font-size: 12px; }
+.fila-test { padding: 8px 0; border-top: 1px solid var(--borde); font-size: 14px; }
+.fila-test b { white-space: nowrap; }
+.evaluacion-obs { margin: 10px 0 0; font-size: 14px; }
+
+/* Código de primer ingreso que el profesor le pasa a la alumna */
+.codigo-ingreso { border-color: var(--oro); text-align: center; }
+.codigo-ingreso small { color: var(--texto-suave); }
+.codigo-ingreso b { display: block; font-family: var(--titulos); font-size: 32px; letter-spacing: 0.15em; color: var(--oro); margin: 4px 0; }
+.codigo-ingreso p { margin: 0; font-size: 14px; color: var(--texto-suave); }
