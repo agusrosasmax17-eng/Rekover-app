@@ -5,15 +5,17 @@
    ========================================================= */
 
 let datos = cargarDatos();
-let perfil = PERFILES.find(p => p.id === cargarSesion()) || null;
+let perfil = armarPerfil(cargarSesion());
 
 // Estado de la pantalla (qué pestaña está abierta, qué alumna está elegida, etc.)
 const ui = {
   pestana: null,
+  errorIngreso: '',         // mensaje si el usuario o la contraseña no coinciden
   filtro: 'Todas',          // filtro de disciplina en la lista de alumnas
   alumnaId: null,           // alumna elegida por el profesor
   dia: new Date().getDay(), // día de la rutina que se está viendo
   agregando: false,         // si está abierta la lista para agregar ejercicios
+  creando: false,           // si está abierto el formulario de ejercicio propio
   musculo: null,            // músculo elegido en esa lista
   nuevaAlumna: false,       // si está abierto el formulario de nueva alumna
   registrando: null,        // índice del ejercicio que la alumna está registrando
@@ -43,12 +45,24 @@ function mostrarAviso(texto) {
   mostrarAviso.t = setTimeout(() => aviso.classList.remove('visible'), 1800);
 }
 
+// Arma los datos de la persona que ingresó a partir de su id
+function armarPerfil(id) {
+  if (!id) return null;
+  const usuario = datos.usuarios.find(u => u.id === id);
+  if (usuario) return { id, rol: usuario.rol, nombre: usuario.nombre };
+  const alumna = datos.alumnas.find(a => a.id === id);
+  if (alumna) return { id, rol: 'alumna', nombre: alumna.nombre, alumnaId: alumna.id };
+  return null;
+}
+
+function numero(n) { return String(Math.round(n * 10) / 10).replace('.', ','); }
+
 function formatoPausa(seg) {
   const m = Math.floor(seg / 60), s = seg % 60;
   return m ? `${m}:${String(s).padStart(2, '0')}` : `${s}s`;
 }
 
-function formatoPeso(kg) { return kg > 0 ? `${String(kg).replace('.', ',')} kg` : 'Sin peso'; }
+function formatoPeso(kg) { return kg > 0 ? `${numero(kg)} kg` : 'Sin peso'; }
 
 function formatoFecha(iso) { const [, m, d] = iso.split('-'); return `${d}/${m}`; }
 
@@ -57,6 +71,12 @@ function alumnaPorId(id) { return datos.alumnas.find(a => a.id === id); }
 function rutinaDe(alumnaId, dia) {
   const r = datos.rutinas[alumnaId] || (datos.rutinas[alumnaId] = {});
   return r[dia] || (r[dia] = []);
+}
+
+// Ejercicios de un músculo: los de la lista base más los que creó el profesor
+function ejerciciosDe(disciplina, musculo) {
+  const propios = datos.ejerciciosPropios[disciplina]?.[musculo] || [];
+  return [...CATALOGO[disciplina][musculo], ...propios.map(([n, p]) => [n, p, true])];
 }
 
 // Isologotipo (K + texto): según el manual de marca, es la variante principal.
@@ -106,16 +126,17 @@ function pantallaIngreso() {
   return `<section class="ingreso">
     ${logo(false)}
     <p class="ingreso-bajada">Sports Recovery</p>
-    <p class="ingreso-lema">Recuperación y rendimiento, con protocolo. Volvé a la cancha.</p>
     <h1>Ingresar</h1>
-    <p class="suave">Elegí un perfil de prueba:</p>
-    <div class="lista-perfiles">
-      ${PERFILES.map(p => `
-        <button class="tarjeta perfil" data-accion="ingresar" data-valor="${p.id}">
-          <span class="perfil-inicial">${p.nombre[0]}</span>
-          <span><strong>${esc(p.nombre)}</strong><small>${esc(p.detalle)}</small></span>
-        </button>`).join('')}
-    </div>
+    <form class="form-ingreso" data-form="ingreso" autocomplete="on">
+      <label class="campo">Usuario o DNI
+        <input name="usuario" required autocomplete="username" autocapitalize="none" placeholder="Tu usuario o tu DNI sin puntos">
+      </label>
+      <label class="campo">Contraseña
+        <input name="clave" type="password" required autocomplete="current-password" placeholder="Tu contraseña">
+      </label>
+      ${ui.errorIngreso ? `<p class="error">${esc(ui.errorIngreso)}</p>` : ''}
+      <button type="submit" class="boton ancho">Ingresar</button>
+    </form>
     <button class="boton-texto reiniciar" data-accion="reiniciar">Volver a los datos de ejemplo</button>
   </section>`;
 }
@@ -150,6 +171,7 @@ function alumnaHoy() {
   const tarjetas = rutina.map((ej, i) => {
     const hecho = datos.registros.find(r => r.alumnaId === alumna.id && r.nombre === ej.nombre && r.fecha === hoy);
     const abierto = ui.registrando === i;
+    const base = hecho || ej; // si ya registró, se muestra lo que hizo
     return `<article class="tarjeta ejercicio ${hecho && esHoy ? 'hecho' : ''}">
       <div class="ejercicio-titulo">
         <div><small class="musculo">${esc(ej.musculo)}</small><h3>${esc(ej.nombre)}</h3></div>
@@ -163,15 +185,24 @@ function alumnaHoy() {
       </div>
       ${!esHoy ? '' : abierto ? `
         <form class="registro" data-form="registro" data-indice="${i}">
-          <label>Peso que usé (kg)<input type="number" name="peso" step="0.5" min="0" inputmode="decimal" value="${hecho ? hecho.peso : ej.peso}"></label>
-          <label>Repeticiones que hice<input type="number" name="reps" step="1" min="0" inputmode="numeric" value="${hecho ? hecho.reps : ej.reps}"></label>
+          <p class="registro-titulo">¿Qué hiciste hoy?</p>
+          <div class="grilla-2">
+            <label>Series<input type="number" name="series" step="1" min="1" inputmode="numeric" value="${base.series}"></label>
+            <label>Repeticiones<input type="number" name="reps" step="1" min="0" inputmode="numeric" value="${base.reps}"></label>
+            <label>Peso (kg)<input type="number" name="peso" step="0.5" min="0" inputmode="decimal" value="${base.peso}"></label>
+            <label>Pausa (segundos)<input type="number" name="pausa" step="5" min="0" inputmode="numeric" value="${base.pausa}"></label>
+          </div>
           <div class="fila-botones">
             <button type="button" class="boton secundario" data-accion="cancelar-registro">Cancelar</button>
             <button type="submit" class="boton">Guardar</button>
           </div>
         </form>`
-      : `<button class="boton ${hecho ? 'secundario' : ''} ancho" data-accion="registrar" data-valor="${i}">
-          ${hecho ? `Hecho: ${formatoPeso(hecho.peso)} × ${hecho.reps} · Cambiar` : 'Registrar lo que hice'}</button>`}
+      : hecho ? `
+        <div class="hecho-resumen">
+          <span><b>Hiciste:</b> ${hecho.series} × ${hecho.reps} · ${formatoPeso(hecho.peso)} · pausa ${formatoPausa(hecho.pausa)}</span>
+          <button class="boton-texto" data-accion="registrar" data-valor="${i}">Cambiar</button>
+        </div>`
+      : `<button class="boton ancho" data-accion="registrar" data-valor="${i}">Registrar lo que hice</button>`}
     </article>`;
   }).join('');
 
@@ -186,13 +217,15 @@ function alumnaProgreso() {
   const alumnaId = perfil.alumnaId;
   const propios = datos.registros.filter(r => r.alumnaId === alumnaId);
   const nombres = [...new Set(propios.map(r => r.nombre))];
-  if (!nombres.length) return `<h1>Mi progreso</h1><div class="tarjeta vacio">Todavía no registraste ejercicios.</div>`;
+  const nota = datos.notasProgreso[alumnaId];
+  const mensajeProfe = nota ? `<div class="tarjeta nota-profe"><h3>Mensaje de tu profe</h3><p>${esc(nota)}</p></div>` : '';
+  if (!nombres.length) return `<h1>Mi progreso</h1><div class="tarjeta vacio">Todavía no registraste ejercicios.</div>${mensajeProfe}`;
   if (!nombres.includes(ui.ejercicioGrafico)) ui.ejercicioGrafico = nombres[0];
 
   const puntos = propios.filter(r => r.nombre === ui.ejercicioGrafico).sort((a, b) => a.fecha.localeCompare(b.fecha));
   const mejorPeso = Math.max(...puntos.map(p => p.peso));
   const mejorReps = Math.max(...puntos.map(p => p.reps));
-  const diferencia = puntos.length > 1 ? puntos[puntos.length - 1].peso - puntos[0].peso : 0;
+  const aumento = puntos[puntos.length - 1].peso - puntos[0].peso;
 
   return `<h1>Mi progreso</h1>
     <label class="campo">Ejercicio
@@ -202,18 +235,36 @@ function alumnaProgreso() {
     </label>
     <div class="resumen">
       <div class="tarjeta"><b>${formatoPeso(mejorPeso)}</b><small>Mejor peso</small></div>
-      <div class="tarjeta"><b>${mejorReps}</b><small>Más reps</small></div>
-      <div class="tarjeta"><b class="${diferencia > 0 ? 'oro' : ''}">${diferencia > 0 ? '+' : ''}${String(diferencia).replace('.', ',')} kg</b><small>Desde el inicio</small></div>
+      <div class="tarjeta"><b>${mejorReps}</b><small>Máx. repeticiones</small></div>
+      <div class="tarjeta"><b class="${aumento > 0 ? 'oro' : ''}">${aumento > 0 ? '+' : ''}${numero(aumento)} kg</b><small>Aumento desde el inicio</small></div>
     </div>
     <div class="tarjeta">
       <h3>Peso (kg)</h3>
       ${grafico(puntos.map(p => ({ fecha: p.fecha, valor: p.peso })), 'var(--azul)')}
     </div>
-    <div class="tarjeta">
-      <h3>Repeticiones</h3>
-      ${grafico(puntos.map(p => ({ fecha: p.fecha, valor: p.reps })), 'var(--oro)')}
+    <div class="tarjeta significado">
+      <h3>Qué significa tu progreso</h3>
+      <p>${significadoProgreso(puntos, mejorPeso, mejorReps)}</p>
     </div>
-    <p class="suave centro">Progreso con números reales: los gráficos usan lo que registrás en "Hoy".</p>`;
+    ${mensajeProfe}`;
+}
+
+// Explica el progreso en palabras simples, con los números reales
+function significadoProgreso(puntos, mejorPeso, mejorReps) {
+  const nombre = esc(ui.ejercicioGrafico);
+  const primero = puntos[0], ultimo = puntos[puntos.length - 1];
+  if (puntos.length < 2) return `Tenés un solo registro de ${nombre}. Con dos o más vas a ver cuánto avanzaste.`;
+  if (mejorPeso === 0) return `${nombre} se hace sin peso. Llegaste a ${mejorReps} repeticiones en una serie.`;
+  const dias = (new Date(ultimo.fecha) - new Date(primero.fecha)) / 864e5;
+  const semanas = Math.max(1, Math.round(dias / 7));
+  const tiempo = semanas === 1 ? '1 semana' : `${semanas} semanas`;
+  const diferencia = ultimo.peso - primero.peso;
+  if (diferencia > 0) {
+    const porcentaje = primero.peso > 0 ? ` (un ${Math.round(diferencia / primero.peso * 100)}% más)` : '';
+    return `En ${tiempo} pasaste de ${formatoPeso(primero.peso)} a ${formatoPeso(ultimo.peso)} en ${nombre}: levantás ${numero(diferencia)} kg más${porcentaje}. Tu mejor marca es ${formatoPeso(mejorPeso)} y llegaste a ${mejorReps} repeticiones en una serie.`;
+  }
+  if (diferencia === 0) return `Hace ${tiempo} que trabajás con ${formatoPeso(ultimo.peso)} en ${nombre}. Cuando completes todas las repeticiones con buena técnica, es momento de hablar con tu profe para subir el peso.`;
+  return `Hoy usás ${numero(-diferencia)} kg menos que al inicio en ${nombre}. Puede ser parte del plan (técnica o recuperación): consultalo con tu profe.`;
 }
 
 // Dibuja un gráfico de línea simple con SVG (sin librerías externas)
@@ -228,15 +279,12 @@ function grafico(puntos, color) {
   const y = v => ar + (max - v) * (H - ar - ab) / (max - min);
   const linea = puntos.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.valor).toFixed(1)}`).join(' ');
   const area = `${linea} L${x(puntos.length - 1).toFixed(1)},${H - ab} L${iz},${H - ab} Z`;
-  const guias = [max, (max + min) / 2, min].map(v => {
-    const t = Math.round(v * 10) / 10;
-    return `<line x1="${iz}" x2="${W - de}" y1="${y(v)}" y2="${y(v)}" class="guia"/>
-      <text x="${iz - 6}" y="${y(v) + 4}" text-anchor="end">${String(t).replace('.', ',')}</text>`;
-  }).join('');
+  const guias = [max, (max + min) / 2, min].map(v => `<line x1="${iz}" x2="${W - de}" y1="${y(v)}" y2="${y(v)}" class="guia"/>
+      <text x="${iz - 6}" y="${y(v) + 4}" text-anchor="end">${numero(v)}</text>`).join('');
   const etiquetas = puntos.map((p, i) => (i === 0 || i === puntos.length - 1 || puntos.length <= 5)
     ? `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${formatoFecha(p.fecha)}</text>` : '').join('');
-  const circulos = puntos.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.valor)}" r="3.5" fill="${color}"><title>${formatoFecha(p.fecha)}: ${p.valor}</title></circle>`).join('');
-  return `<svg class="grafico" viewBox="0 0 ${W} ${H}" role="img" aria-label="Gráfico de progreso">
+  const circulos = puntos.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.valor)}" r="3.5" fill="${color}"><title>${formatoFecha(p.fecha)}: ${numero(p.valor)} kg</title></circle>`).join('');
+  return `<svg class="grafico" viewBox="0 0 ${W} ${H}" role="img" aria-label="Gráfico de peso">
     ${guias}
     <path d="${area}" fill="${color}" opacity="0.12"/>
     <path d="${linea}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
@@ -279,12 +327,18 @@ function pantallaProfesor() {
 }
 
 function profesorAlumnas() {
+  const filtros = ['Todas', ...DISCIPLINAS, ...DISCIPLINAS_PROXIMAMENTE];
+  const chips = `<div class="chips">${filtros.map(d =>
+    `<button class="chip ${ui.filtro === d ? 'activa' : ''}" data-accion="filtro" data-valor="${d}">${d}</button>`).join('')}
+  </div>`;
+  const encabezadoLista = `<h1>Gimnasio</h1><p class="suave">Paso 1: elegí la alumna para armar su rutina.</p>${chips}`;
+
+  if (DISCIPLINAS_PROXIMAMENTE.includes(ui.filtro)) {
+    return encabezadoLista + `<div class="tarjeta vacio"><span class="etiqueta-oro">Próximamente</span><p>${ui.filtro} se suma en una próxima versión de la app.</p></div>`;
+  }
+
   const lista = datos.alumnas.filter(a => ui.filtro === 'Todas' || a.disciplina === ui.filtro);
-  return `<h1>Gimnasio</h1>
-    <p class="suave">Paso 1: elegí la alumna para armar su rutina.</p>
-    <div class="chips">${['Todas', ...DISCIPLINAS].map(d =>
-      `<button class="chip ${ui.filtro === d ? 'activa' : ''}" data-accion="filtro" data-valor="${d}">${d}</button>`).join('')}
-    </div>
+  return encabezadoLista + `
     ${lista.map(a => {
       const dias = Object.keys(datos.rutinas[a.id] || {}).filter(d => datos.rutinas[a.id][d].length).length;
       return `<button class="tarjeta fila-alumna" data-accion="elegir-alumna" data-valor="${a.id}">
@@ -297,9 +351,13 @@ function profesorAlumnas() {
       <form class="tarjeta" data-form="nueva-alumna">
         <h3>Nueva alumna</h3>
         <label class="campo">Nombre y apellido<input name="nombre" required maxlength="40" placeholder="Ej.: Ana Torres"></label>
+        <label class="campo">DNI (sin puntos) — con esto ingresa
+          <input name="dni" required inputmode="numeric" pattern="[0-9]{7,8}" maxlength="8" placeholder="Ej.: 35123456"></label>
+        <label class="campo">Contraseña inicial<input name="clave" required minlength="4" maxlength="30" placeholder="Mínimo 4 caracteres"></label>
         <label class="campo">Disciplina
           <select name="disciplina">${DISCIPLINAS.map(d => `<option>${d}</option>`).join('')}</select>
         </label>
+        ${ui.errorAlumna ? `<p class="error">${esc(ui.errorAlumna)}</p>` : ''}
         <div class="fila-botones">
           <button type="button" class="boton secundario" data-accion="cerrar-nueva-alumna">Cancelar</button>
           <button type="submit" class="boton">Agregar</button>
@@ -328,11 +386,18 @@ function profesorRutina() {
 
   return `<button class="boton-texto volver" data-accion="volver">‹ Alumnas</button>
     <h1>${esc(alumna.nombre)}</h1>
-    <p class="suave">${esc(alumna.disciplina)} · Paso 2: elegí el día y armá la rutina.</p>
+    <p class="suave">${esc(alumna.disciplina)} · DNI ${esc(alumna.dni)} · Paso 2: elegí el día y armá la rutina.</p>
     ${selectorDias(alumna.id)}
     <h2>${DIAS[ui.dia]}</h2>
     ${items || '<div class="tarjeta vacio">Este día no tiene ejercicios todavía.</div>'}
-    ${ui.agregando ? selectorEjercicios(alumna) : '<button class="boton ancho" data-accion="abrir-agregar">+ Agregar ejercicio</button>'}`;
+    ${ui.agregando ? selectorEjercicios(alumna) : '<button class="boton ancho" data-accion="abrir-agregar">+ Agregar ejercicio</button>'}
+    <h2>Mensaje de progreso</h2>
+    <form class="tarjeta" data-form="nota">
+      <label class="campo">Lo ve ${esc(alumna.nombre.split(' ')[0])} al final de su pantalla de Progreso
+        <textarea name="nota" rows="3" maxlength="400" placeholder="Ej.: Subiste 10 kg en sentadilla en 6 semanas. Próximo objetivo: 50 kg.">${esc(datos.notasProgreso[alumna.id] || '')}</textarea>
+      </label>
+      <button type="submit" class="boton secundario ancho">Guardar mensaje</button>
+    </form>`;
 }
 
 // Un valor con botones − y + para cambiarlo rápido
@@ -352,8 +417,7 @@ const PASOS = { series: 1, reps: 1, peso: 2.5, pausa: 15 };
 const MINIMOS = { series: 1, reps: 1, peso: 0, pausa: 0 };
 
 function selectorEjercicios(alumna) {
-  const grupos = CATALOGO[alumna.disciplina];
-  const musculos = Object.keys(grupos);
+  const musculos = Object.keys(CATALOGO[alumna.disciplina]);
   if (!musculos.includes(ui.musculo)) ui.musculo = musculos[0];
   const yaEstan = rutinaDe(alumna.id, ui.dia).map(e => e.nombre);
   return `<div class="tarjeta selector">
@@ -362,11 +426,23 @@ function selectorEjercicios(alumna) {
     <div class="chips">${musculos.map(m =>
       `<button class="chip ${ui.musculo === m ? 'activa' : ''}" data-accion="musculo" data-valor="${esc(m)}">${esc(m)}</button>`).join('')}
     </div>
-    <div class="lista-ejercicios">${grupos[ui.musculo].map(([nombre, peso]) => {
+    <div class="lista-ejercicios">${ejerciciosDe(alumna.disciplina, ui.musculo).map(([nombre, peso, propio]) => {
       const esta = yaEstan.includes(nombre);
-      return `<button class="opcion ${esta ? 'agregado' : ''}" data-accion="agregar" data-valor="${esc(nombre)}" ${esta ? 'disabled' : ''}>
-        <span>${esc(nombre)}</span><small>${esta ? 'Ya está' : formatoPeso(peso) + ' · +'}</small></button>`;
+      return `<button class="opcion" data-accion="agregar" data-valor="${esc(nombre)}" data-peso="${peso}">
+        <span>${esc(nombre)}${propio ? ' <em class="etiqueta-propio">Propio</em>' : ''}</span>
+        <small>${esta ? 'En la rutina · +' : formatoPeso(peso) + ' · +'}</small></button>`;
     }).join('')}</div>
+    ${ui.creando ? `
+      <form class="crear-ejercicio" data-form="crear-ejercicio">
+        <p class="registro-titulo">Crear mi propio ejercicio (${esc(ui.musculo)})</p>
+        <label class="campo">Nombre<input name="nombre" required maxlength="40" placeholder="Ej.: Sentadilla búlgara"></label>
+        <label class="campo">Peso sugerido (kg, 0 = sin peso)<input name="peso" type="number" min="0" step="0.5" inputmode="decimal" value="0"></label>
+        <div class="fila-botones">
+          <button type="button" class="boton secundario" data-accion="cerrar-crear">Cancelar</button>
+          <button type="submit" class="boton">Crear y agregar</button>
+        </div>
+      </form>`
+    : `<button class="boton secundario ancho crear-boton" data-accion="abrir-crear">+ Crear mi propio ejercicio</button>`}
   </div>`;
 }
 
@@ -400,21 +476,15 @@ app.addEventListener('click', ev => {
   const v = b.dataset.valor;
 
   switch (b.dataset.accion) {
-    case 'ingresar':
-      perfil = PERFILES.find(p => p.id === v);
-      guardarSesion(perfil.id);
-      ui.pestana = PESTANAS[perfil.rol][0][0];
-      ui.alumnaId = null; ui.dia = new Date().getDay(); ui.estrellas = 0;
-      break;
     case 'salir':
-      perfil = null; guardarSesion(null);
+      perfil = null; guardarSesion(null); ui.errorIngreso = '';
       break;
     case 'reiniciar':
       if (!confirm('¿Borrar los cambios y volver a los datos de ejemplo?')) return;
       borrarDatos(); datos = cargarDatos();
       mostrarAviso('Datos de ejemplo restaurados'); return;
     case 'pestana':
-      ui.pestana = v; ui.alumnaId = null; ui.agregando = false; ui.registrando = null;
+      ui.pestana = v; ui.alumnaId = null; ui.agregando = false; ui.creando = false; ui.registrando = null;
       ui.dia = new Date().getDay(); ui.estrellas = 0; ui.comentario = '';
       break;
     case 'dia':
@@ -425,25 +495,26 @@ app.addEventListener('click', ev => {
     case 'cancelar-registro': ui.registrando = null; break;
     case 'estrella': ui.estrellas = Number(v); break;
     // Profesor
-    case 'filtro': ui.filtro = v; break;
+    case 'filtro': ui.filtro = v; ui.nuevaAlumna = false; break;
     case 'elegir-alumna':
-      ui.alumnaId = v; ui.agregando = false;
+      ui.alumnaId = v; ui.agregando = false; ui.creando = false;
       ui.dia = new Date().getDay();
       break;
-    case 'volver': ui.alumnaId = null; ui.agregando = false; break;
-    case 'abrir-nueva-alumna': ui.nuevaAlumna = true; break;
+    case 'volver': ui.alumnaId = null; ui.agregando = false; ui.creando = false; break;
+    case 'abrir-nueva-alumna': ui.nuevaAlumna = true; ui.errorAlumna = ''; break;
     case 'cerrar-nueva-alumna': ui.nuevaAlumna = false; break;
     case 'abrir-agregar': ui.agregando = true; break;
-    case 'cerrar-agregar': ui.agregando = false; break;
-    case 'musculo': ui.musculo = v; break;
+    case 'cerrar-agregar': ui.agregando = false; ui.creando = false; break;
+    case 'abrir-crear': ui.creando = true; break;
+    case 'cerrar-crear': ui.creando = false; break;
+    case 'musculo': ui.musculo = v; ui.creando = false; break;
     case 'agregar': {
       const alumna = alumnaPorId(ui.alumnaId);
-      const ej = CATALOGO[alumna.disciplina][ui.musculo].find(e => e[0] === v);
-      rutinaDe(alumna.id, ui.dia).push(itemRutina(alumna.disciplina, ej[0], 3, 10, ej[1], 60));
+      rutinaDe(alumna.id, ui.dia).push(itemRutina(alumna.disciplina, v, 3, 10, Number(b.dataset.peso), 60, ui.musculo));
       guardar(); mostrarAviso('Ejercicio agregado'); return;
     }
     case 'quitar':
-      rutinaDe(ui.alumnaId, ui.dia).splice(Number(b.dataset.valor), 1);
+      rutinaDe(ui.alumnaId, ui.dia).splice(Number(v), 1);
       guardar();
       break;
     case 'paso': {
@@ -469,15 +540,30 @@ app.addEventListener('submit', ev => {
   ev.preventDefault();
   const f = ev.target;
   const campos = new FormData(f);
+  const num = (nombre, min) => Math.max(min, Number(campos.get(nombre)) || 0);
+
+  if (f.dataset.form === 'ingreso') {
+    const id = buscarIngreso(datos, String(campos.get('usuario')), String(campos.get('clave')));
+    if (!id) { ui.errorIngreso = 'El usuario o la contraseña no coinciden. Revisalos e intentá de nuevo.'; dibujar(); return; }
+    perfil = armarPerfil(id);
+    guardarSesion(id);
+    ui.errorIngreso = '';
+    ui.pestana = PESTANAS[perfil.rol][0][0];
+    ui.alumnaId = null; ui.dia = new Date().getDay(); ui.estrellas = 0; ui.comentario = '';
+    dibujar();
+  }
 
   if (f.dataset.form === 'registro') {
     const ej = rutinaDe(perfil.alumnaId, ui.dia)[Number(f.dataset.indice)];
     const hoy = fechaISO();
-    const peso = Math.max(0, Number(campos.get('peso')) || 0);
-    const reps = Math.max(0, Math.round(Number(campos.get('reps')) || 0));
+    const registro = {
+      alumnaId: perfil.alumnaId, nombre: ej.nombre, fecha: hoy,
+      series: Math.round(num('series', 1)), reps: Math.round(num('reps', 0)),
+      peso: num('peso', 0), pausa: Math.round(num('pausa', 0))
+    };
     // Si ya había un registro de hoy para ese ejercicio, se reemplaza
     datos.registros = datos.registros.filter(r => !(r.alumnaId === perfil.alumnaId && r.nombre === ej.nombre && r.fecha === hoy));
-    datos.registros.push({ alumnaId: perfil.alumnaId, nombre: ej.nombre, fecha: hoy, peso, reps });
+    datos.registros.push(registro);
     ui.registrando = null;
     guardar(); mostrarAviso('Registro guardado. Sumaste progreso');
   }
@@ -491,10 +577,36 @@ app.addEventListener('submit', ev => {
 
   if (f.dataset.form === 'nueva-alumna') {
     const nombre = String(campos.get('nombre') || '').trim();
-    if (!nombre) return;
-    datos.alumnas.push({ id: 'a' + Date.now(), nombre, disciplina: campos.get('disciplina') });
-    ui.nuevaAlumna = false;
+    const dni = String(campos.get('dni') || '').replace(/\D/g, '');
+    const clave = String(campos.get('clave') || '');
+    if (!nombre || !dni) return;
+    if (datos.alumnas.some(a => a.dni === dni) || datos.usuarios.some(u => u.usuario === dni)) {
+      ui.errorAlumna = 'Ya hay una persona con ese DNI.'; dibujar(); return;
+    }
+    datos.alumnas.push({ id: 'a' + Date.now(), nombre, disciplina: campos.get('disciplina'), dni, clave });
+    ui.nuevaAlumna = false; ui.errorAlumna = '';
     guardar(); mostrarAviso('Alumna agregada');
+  }
+
+  if (f.dataset.form === 'crear-ejercicio') {
+    const alumna = alumnaPorId(ui.alumnaId);
+    const nombre = String(campos.get('nombre') || '').trim();
+    if (!nombre) return;
+    const peso = num('peso', 0);
+    const porMusculo = datos.ejerciciosPropios[alumna.disciplina] || (datos.ejerciciosPropios[alumna.disciplina] = {});
+    const lista = porMusculo[ui.musculo] || (porMusculo[ui.musculo] = []);
+    // Queda guardado en la lista para usarlo con cualquier alumna
+    if (!ejerciciosDe(alumna.disciplina, ui.musculo).some(e => e[0].toLowerCase() === nombre.toLowerCase())) lista.push([nombre, peso]);
+    rutinaDe(alumna.id, ui.dia).push(itemRutina(alumna.disciplina, nombre, 3, 10, peso, 60, ui.musculo));
+    ui.creando = false;
+    guardar(); mostrarAviso('Ejercicio creado y agregado');
+  }
+
+  if (f.dataset.form === 'nota') {
+    const nota = String(campos.get('nota') || '').trim().slice(0, 400);
+    if (nota) datos.notasProgreso[ui.alumnaId] = nota;
+    else delete datos.notasProgreso[ui.alumnaId];
+    guardar(); mostrarAviso('Mensaje guardado');
   }
 });
 

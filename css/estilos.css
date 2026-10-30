@@ -109,8 +109,16 @@ button { cursor: pointer; }
   letter-spacing: 0.2em;
   text-transform: uppercase;
 }
-.ingreso-lema { color: var(--texto-suave); max-width: 300px; margin: 14px 0 30px; }
-.lista-perfiles { width: 100%; display: grid; gap: 12px; margin-bottom: 24px; }
+.ingreso h1 { margin-top: 36px; }
+.form-ingreso { width: 100%; text-align: left; margin: 12px 0 24px; }
+.error {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--oro);
+  background: rgba(240, 165, 0, 0.12);
+  border-radius: 8px;
+  font-size: 14px;
+}
 .reiniciar { margin-top: auto; }
 
 .perfil {
@@ -346,3 +354,33 @@ textarea { resize: vertical; }
   white-space: nowrap;
 }
 .aviso.visible { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---------- Registro de la alumna ---------- */
+.registro-titulo { margin: 0; font-weight: 600; color: var(--blanco); }
+.grilla-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.hecho-resumen {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(74, 179, 244, 0.12);
+  font-size: 14px;
+}
+
+/* ---------- Ejercicios propios del profesor ---------- */
+.etiqueta-propio {
+  font-style: normal;
+  font-size: 11px; font-weight: 700;
+  color: var(--oro);
+  border: 1px solid var(--oro);
+  border-radius: 999px;
+  padding: 1px 7px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.crear-boton { margin-top: 12px; }
+.crear-ejercicio { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--borde); display: grid; gap: 4px; }
+.crear-ejercicio .registro-titulo { margin-bottom: 8px; }
+
+/* ---------- Progreso: explicación y mensaje del profe ---------- */
+.significado p, .nota-profe p { margin: 6px 0 0; }
+.nota-profe { border-left: 3px solid var(--oro); }

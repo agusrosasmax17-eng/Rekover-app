@@ -3,24 +3,19 @@
    Todos los datos son INVENTADOS. Nada de datos reales.
    ========================================================= */
 
-const CLAVE_DATOS = 'rekover_datos_v1';
-const CLAVE_SESION = 'rekover_sesion_v1';
+const CLAVE_DATOS = 'rekover_datos_v2';
+const CLAVE_SESION = 'rekover_sesion_v2';
 
-// Los tres perfiles de prueba de la pantalla de ingreso
-const PERFILES = [
-  { id: 'alumna',   rol: 'alumna',   nombre: 'Sofía Gómez',  detalle: 'Alumna de gimnasio',        alumnaId: 'a1' },
-  { id: 'paciente', rol: 'paciente', nombre: 'Martín López', detalle: 'Paciente de kinesiología' },
-  { id: 'profe',    rol: 'profesor', nombre: 'Lucas Pérez',  detalle: 'Profesor / Kinesiólogo' }
-];
-
-const DISCIPLINAS = ['Musculación', 'Funcional', 'Pilates'];
+// Disciplinas activas. Pilates aparece como "Próximamente".
+const DISCIPLINAS = ['Musculación', 'Funcional'];
+const DISCIPLINAS_PROXIMAMENTE = ['Pilates'];
 
 // Días de la semana (0 = domingo, como lo cuenta JavaScript)
 const DIAS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
 const DIAS_CORTOS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
-// Lista de ejercicios agrupados por disciplina y por músculo.
-// "peso" es el peso sugerido (en kg) al agregarlo; 0 = sin peso.
+// Lista base de ejercicios por disciplina y por músculo: [nombre, peso sugerido en kg].
+// 0 = sin peso. El profesor puede sumar ejercicios propios desde la app.
 const CATALOGO = {
   'Musculación': {
     'Pecho':    [['Press de banca', 30], ['Press inclinado con mancuernas', 10], ['Aperturas con mancuernas', 6], ['Fondos en paralelas', 0]],
@@ -37,16 +32,10 @@ const CATALOGO = {
     'Tren inferior': [['Sentadilla goblet', 12], ['Estocadas', 6], ['Peso muerto con kettlebell', 16], ['Saltos al cajón', 0]],
     'Core':          [['Plancha lateral', 0], ['Mountain climbers', 0], ['Rueda abdominal', 0]],
     'Cardio':        [['Burpees', 0], ['Soga', 0], ['Battle rope', 0], ['Swing con kettlebell', 12]]
-  },
-  'Pilates': {
-    'Core':             [['The hundred', 0], ['Roll up', 0], ['Criss cross', 0]],
-    'Piernas y glúteos': [['Puente de hombros', 0], ['Patadas laterales', 0], ['Footwork en reformer', 0]],
-    'Espalda y postura': [['Swan', 0], ['Swimming', 0], ['Spine stretch', 0]],
-    'Movilidad':        [['Círculos de pierna', 0], ['Gato-vaca', 0], ['Saw', 0]]
   }
 };
 
-// Busca a qué músculo pertenece un ejercicio
+// Busca a qué músculo pertenece un ejercicio de la lista base
 function musculoDe(disciplina, nombre) {
   const grupos = CATALOGO[disciplina] || {};
   for (const musculo in grupos) {
@@ -64,20 +53,27 @@ function fechaISO(fecha = new Date()) {
 }
 
 // Arma un ejercicio de rutina con valores iniciales
-function itemRutina(disciplina, nombre, series, reps, peso, pausa) {
-  return { nombre, musculo: musculoDe(disciplina, nombre), series, reps, peso, pausa };
+function itemRutina(disciplina, nombre, series, reps, peso, pausa, musculo) {
+  return { nombre, musculo: musculo || musculoDe(disciplina, nombre), series, reps, peso, pausa };
 }
 
 // Crea todos los datos de ejemplo desde cero
 function crearDatosDeEjemplo() {
-  const M = 'Musculación', F = 'Funcional', P = 'Pilates';
+  const M = 'Musculación', F = 'Funcional';
+
+  // Profesor y paciente. Las alumnas tienen su propio DNI y contraseña más abajo.
+  // OJO: en este prototipo las contraseñas quedan guardadas en el navegador sin protección.
+  // Sirven para probar, no son seguras para datos reales.
+  const usuarios = [
+    { id: 'profe',    rol: 'profesor', nombre: 'Lucas Pérez',  usuario: 'profesor', clave: 'rekover123' },
+    { id: 'paciente', rol: 'paciente', nombre: 'Martín López', usuario: '28333444', clave: 'martin123' }
+  ];
 
   const alumnas = [
-    { id: 'a1', nombre: 'Sofía Gómez',     disciplina: M },
-    { id: 'a2', nombre: 'Valentina Ruiz',  disciplina: F },
-    { id: 'a3', nombre: 'Camila Díaz',     disciplina: P },
-    { id: 'a4', nombre: 'Lucía Fernández', disciplina: M },
-    { id: 'a5', nombre: 'Martina Sosa',    disciplina: F }
+    { id: 'a1', nombre: 'Sofía Gómez',     disciplina: M, dni: '30111222', clave: 'sofia123' },
+    { id: 'a2', nombre: 'Valentina Ruiz',  disciplina: F, dni: '31222333', clave: 'vale123' },
+    { id: 'a4', nombre: 'Lucía Fernández', disciplina: M, dni: '32444555', clave: 'lucia123' },
+    { id: 'a5', nombre: 'Martina Sosa',    disciplina: F, dni: '33555666', clave: 'martina123' }
   ];
 
   // Rutinas: para cada alumna, una lista de ejercicios por día de la semana
@@ -99,10 +95,6 @@ function crearDatosDeEjemplo() {
       3: [itemRutina(F, 'Swing con kettlebell', 4, 15, 12, 60), itemRutina(F, 'Flexiones de brazos', 3, 10, 0, 45)],
       5: [itemRutina(F, 'Estocadas', 3, 12, 6, 60), itemRutina(F, 'Mountain climbers', 3, 30, 0, 30)]
     },
-    a3: {
-      2: [itemRutina(P, 'The hundred', 1, 100, 0, 30), itemRutina(P, 'Roll up', 2, 8, 0, 30), itemRutina(P, 'Puente de hombros', 3, 10, 0, 30)],
-      4: [itemRutina(P, 'Swan', 2, 8, 0, 30), itemRutina(P, 'Círculos de pierna', 2, 10, 0, 30)]
-    },
     a4: {
       1: [itemRutina(M, 'Prensa de piernas', 4, 12, 90, 90), itemRutina(M, 'Extensión de cuádriceps', 3, 12, 25, 60)],
       4: [itemRutina(M, 'Press de banca', 4, 10, 25, 90), itemRutina(M, 'Jalón al pecho', 4, 10, 30, 90)]
@@ -113,30 +105,48 @@ function crearDatosDeEjemplo() {
   // Historial inventado de Sofía: 8 semanas de registros para que los gráficos tengan datos
   const registros = [];
   const historial = [
-    ['Press de banca', 25, 35, 8, 10],
-    ['Sentadilla', 35, 47.5, 8, 10],
-    ['Hip thrust', 45, 65, 10, 12],
-    ['Jalón al pecho', 25, 32.5, 9, 11],
-    ['Press militar', 15, 20, 8, 10]
+    // [ejercicio, peso inicial, peso final, reps mín, reps máx, series, pausa]
+    ['Press de banca', 25, 35, 8, 10, 4, 90],
+    ['Sentadilla', 35, 47.5, 8, 10, 4, 120],
+    ['Hip thrust', 45, 65, 10, 12, 4, 90],
+    ['Jalón al pecho', 25, 32.5, 9, 11, 4, 90],
+    ['Press militar', 15, 20, 8, 10, 4, 90]
   ];
   const hoy = new Date();
   for (let semana = 8; semana >= 1; semana--) {
     const dia = new Date(hoy);
     dia.setDate(hoy.getDate() - semana * 7);
     const avance = (8 - semana) / 7; // de 0 a 1
-    historial.forEach(([nombre, pesoInicial, pesoFinal, repsMin, repsMax], i) => {
+    historial.forEach(([nombre, pesoInicial, pesoFinal, repsMin, repsMax, series, pausa], i) => {
       const peso = Math.round((pesoInicial + (pesoFinal - pesoInicial) * avance) / 2.5) * 2.5;
       const reps = repsMin + ((semana + i) % (repsMax - repsMin + 1));
-      registros.push({ alumnaId: 'a1', nombre, fecha: fechaISO(dia), peso, reps });
+      registros.push({ alumnaId: 'a1', nombre, fecha: fechaISO(dia), series, reps, peso, pausa });
     });
   }
 
   const encuestas = [
-    { area: 'gimnasio', autor: 'Valentina Ruiz', fecha: fechaISO(new Date(hoy.getTime() - 5 * 864e5)), puntaje: 5, comentario: 'Me encantan las clases de funcional.' },
-    { area: 'gimnasio', autor: 'Camila Díaz',    fecha: fechaISO(new Date(hoy.getTime() - 3 * 864e5)), puntaje: 4, comentario: 'Muy buena atención, sumaría más horarios.' }
+    { area: 'gimnasio', autor: 'Valentina Ruiz',  fecha: fechaISO(new Date(hoy.getTime() - 5 * 864e5)), puntaje: 5, comentario: 'Me encantan las clases de funcional.' },
+    { area: 'gimnasio', autor: 'Lucía Fernández', fecha: fechaISO(new Date(hoy.getTime() - 3 * 864e5)), puntaje: 4, comentario: 'Muy buena atención, sumaría más horarios.' }
   ];
 
-  return { alumnas, rutinas, registros, encuestas };
+  // Mensaje del profesor sobre el progreso de cada alumna
+  const notasProgreso = {
+    a1: 'Muy buen avance: en 8 semanas subiste 12,5 kg en sentadilla sin perder técnica. Próximo objetivo: 50 kg con 8 repeticiones.'
+  };
+
+  // Ejercicios que crea el profesor: { disciplina: { músculo: [[nombre, peso]] } }
+  const ejerciciosPropios = {};
+
+  return { usuarios, alumnas, rutinas, registros, encuestas, notasProgreso, ejerciciosPropios };
+}
+
+// Busca a la persona que quiere ingresar. Devuelve su id o null.
+// Profesor y paciente entran con su usuario; las alumnas, con su DNI.
+function buscarIngreso(datos, usuario, clave) {
+  const u = usuario.trim().toLowerCase().replace(/\./g, '');
+  const encontrado = datos.usuarios.find(x => x.usuario.toLowerCase() === u)
+    || datos.alumnas.find(x => x.dni === u);
+  return encontrado && encontrado.clave === clave ? encontrado.id : null;
 }
 
 // Lee los datos del navegador; si no hay, crea los de ejemplo
@@ -162,9 +172,9 @@ function cargarSesion() {
   try { return localStorage.getItem(CLAVE_SESION); } catch (e) { return null; }
 }
 
-function guardarSesion(perfilId) {
+function guardarSesion(id) {
   try {
-    if (perfilId) localStorage.setItem(CLAVE_SESION, perfilId);
+    if (id) localStorage.setItem(CLAVE_SESION, id);
     else localStorage.removeItem(CLAVE_SESION);
   } catch (e) { /* nada */ }
 }

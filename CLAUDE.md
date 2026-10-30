@@ -63,8 +63,25 @@ Rekover es **Sports Recovery**. El PDF del manual es confidencial: no subirlo al
 
 ## Estado actual
 
-- Hecho: pantalla de ingreso, sección Gimnasio completa, encuesta del gimnasio.
+- Hecho:
+  - Ingreso con usuario o DNI y contraseña (la pantalla no muestra datos de nadie).
+  - Gimnasio para Musculación y Funcional. El profesor puede repetir ejercicios y crear ejercicios propios.
+  - La alumna registra series, repeticiones, peso y pausa.
+  - Progreso solo en kg: mejor peso, máx. repeticiones, aumento desde el inicio, explicación en palabras y mensaje del profesor.
+  - Encuesta del gimnasio.
+- Pilates: "Próximamente".
 - Pendiente: sección Kinesiología (turnos, sesiones, encuesta de kinesiología).
+
+## Usuarios de prueba (inventados)
+
+| Perfil | Usuario o DNI | Contraseña |
+| --- | --- | --- |
+| Profesor (Lucas Pérez) | `profesor` | `rekover123` |
+| Alumna (Sofía Gómez) | `30111222` | `sofia123` |
+| Paciente (Martín López) | `28333444` | `martin123` |
+
+Otras alumnas: Valentina `31222333` / `vale123`, Lucía `32444555` / `lucia123`, Martina `33555666` / `martina123`.
+Las contraseñas quedan en el navegador sin protección: es solo un prototipo. Para datos reales hará falta un servidor con ingreso seguro.
 
 ## Cómo está organizado el código
 
