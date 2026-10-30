@@ -21,7 +21,34 @@ La dueña del proyecto **no sabe programar**: explicar siempre todo en **españo
 | Blanco (textos sobre fondo oscuro) | `#FFFFFF` |
 
 - Títulos en **Oswald Bold** y textos en **Inter** (Google Fonts).
-- Usar los **logos PNG del repositorio** (carpeta `img/`; la app busca `img/logo.png`).
+- Usar los **logos PNG del repositorio** (carpeta `img/`).
+
+## Manual de Marca Rekover (v1.0, Ataraxia Systems™) — resumen
+
+Rekover es **Sports Recovery**. El PDF del manual es confidencial: no subirlo al repositorio (que puede ser público); acá va lo necesario.
+
+**Logos** (en `img/`, PNG con fondo transparente):
+- `rekover_isologotipo.png` — K + texto. **Variante principal**: encabezados y pantalla de ingreso.
+- `rekover_isotipo.png` — solo la K. Ícono de la pestaña, avatar, marca de agua. Debe reconocerse a 40 px.
+- `rekover_logotipo.png` — solo texto. Documentos y firmas. Nunca como ícono/avatar.
+- `icono.png` — isotipo sobre fondo navy sólido (favicon).
+- Los PNG se sacaron del PDF y tienen poca resolución: si llegan los originales, reemplazarlos con el mismo nombre.
+
+**Reglas del logo**: solo sobre navy `#0D2240` o blanco puro (el texto "KOVER" es blanco, así que en esta app va sobre navy). Dejar aire alrededor (espacio de respiro = altura de la K). Nunca estirar, aplastar, rotar, cambiar colores, poner sombras/brillos/3D, degradé, contorno ni transparencias. No cambiar la posición de la K respecto del texto.
+
+**Roles de color**:
+- Navy oscuro `#0D2240`: fondo dominante, headers, fondos de cards.
+- Navy medio `#1A4A7A`: fondos alternativos, gradientes, capas de profundidad.
+- Azul eléctrico `#4AB3F4`: botones/CTAs, destacados, íconos, líneas divisorias y flechas.
+- Oro `#F0A500`: acento premium, separadores, elementos especiales (con moderación).
+- Blanco `#FFFFFF`: texto sobre navy. Sobre fondos claros, texto en navy.
+- Gris claro `#F4F8FC`: fondo opcional para contenido claro.
+
+**Jerarquía tipográfica**: H1 Oswald Bold (blanco) · H2 Oswald SemiBold · H3 Oswald Bold en azul eléctrico · Texto Inter Regular · Notas chicas Inter Medium en gris sutil. No usar otras tipografías ni mezclarlas (títulos siempre Oswald, texto siempre Inter).
+
+**Voz y tono**: experto, empático, real (resultados con números, sin promesas vacías) y directo (sin relleno). "El profesional que te devuelve a la cancha".
+- Palabras que SÍ: recuperación, rendimiento, protocolo, resultado, progreso, "volvé a la cancha".
+- Palabras que NO: holístico, mágico, transformacional, empoderamiento, "100% garantizado", "somos los mejores".
 
 ## Qué tiene que hacer la app
 
@@ -45,4 +72,4 @@ La dueña del proyecto **no sabe programar**: explicar siempre todo en **españo
 - `css/estilos.css` — colores, tipografías y diseño.
 - `js/datos.js` — datos de ejemplo y funciones para guardar/leer del navegador.
 - `js/app.js` — las pantallas y lo que pasa al tocar cada botón.
-- `img/` — logos.
+- `img/` — logos e ícono de la marca.

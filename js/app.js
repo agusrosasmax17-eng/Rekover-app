@@ -59,9 +59,10 @@ function rutinaDe(alumnaId, dia) {
   return r[dia] || (r[dia] = []);
 }
 
+// Isologotipo (K + texto): según el manual de marca, es la variante principal.
+// Se usa siempre sobre fondo navy, sin estirarlo ni agregarle efectos.
 function logo(chico) {
-  return `<img class="logo ${chico ? 'logo-chico' : ''}" src="img/logo.png" alt="Rekover"
-    onerror="this.outerHTML='<span class=&quot;logo-texto ${chico ? 'logo-chico' : ''}&quot;>REKOVER</span>'">`;
+  return `<img class="logo ${chico ? 'logo-chico' : ''}" src="img/rekover_isologotipo.png" alt="Rekover">`;
 }
 
 /* ---------- Dibujo general ---------- */
@@ -104,7 +105,8 @@ function menuInferior() {
 function pantallaIngreso() {
   return `<section class="ingreso">
     ${logo(false)}
-    <p class="ingreso-lema">Entrená. Recuperate. Volvé más fuerte.</p>
+    <p class="ingreso-bajada">Sports Recovery</p>
+    <p class="ingreso-lema">Recuperación y rendimiento, con protocolo. Volvé a la cancha.</p>
     <h1>Ingresar</h1>
     <p class="suave">Elegí un perfil de prueba:</p>
     <div class="lista-perfiles">
@@ -176,7 +178,7 @@ function alumnaHoy() {
   return `<h1>${esHoy ? 'Mi rutina de hoy' : 'Rutina del ' + DIAS[ui.dia].toLowerCase()}</h1>
     <p class="suave">${esc(alumna.disciplina)} · ${DIAS[ui.dia]}</p>
     ${selectorDias(alumna.id)}
-    ${rutina.length ? tarjetas : `<div class="tarjeta vacio">${esHoy ? 'Hoy no tenés rutina: ¡día de descanso! 😌' : 'No hay rutina para este día.'}</div>`}
+    ${rutina.length ? tarjetas : `<div class="tarjeta vacio">${esHoy ? 'Hoy no tenés rutina: día de recuperación. Mañana seguimos.' : 'No hay rutina para este día.'}</div>`}
     ${!esHoy && rutina.length ? '<p class="suave centro">Podés registrar lo que hiciste solo en la rutina de hoy.</p>' : ''}`;
 }
 
@@ -211,7 +213,7 @@ function alumnaProgreso() {
       <h3>Repeticiones</h3>
       ${grafico(puntos.map(p => ({ fecha: p.fecha, valor: p.reps })), 'var(--oro)')}
     </div>
-    <p class="suave centro">Los gráficos usan lo que registrás en "Hoy".</p>`;
+    <p class="suave centro">Progreso con números reales: los gráficos usan lo que registrás en "Hoy".</p>`;
 }
 
 // Dibuja un gráfico de línea simple con SVG (sin librerías externas)
@@ -272,7 +274,7 @@ function tarjetaEncuesta(e) {
 
 function pantallaProfesor() {
   if (ui.pestana === 'encuestas') return profesorEncuestas();
-  if (ui.pestana === 'kinesio') return proximamente('Kinesiología', 'Acá vas a poder agregar turnos y registrar cada sesión.');
+  if (ui.pestana === 'kinesio') return proximamente('Kinesiología', 'Acá vas a agregar turnos y registrar cada sesión: evaluación, protocolo y resultado.');
   return ui.alumnaId ? profesorRutina() : profesorAlumnas();
 }
 
@@ -382,7 +384,7 @@ function profesorEncuestas() {
 /* ---------- Paciente (Kinesiología: próximo pedido) ---------- */
 
 function pantallaPaciente() {
-  return proximamente('Kinesiología', 'Muy pronto vas a poder sacar turnos y ver lo que se hizo en cada sesión.');
+  return proximamente('Kinesiología', 'Pronto vas a sacar turno desde acá y ver qué se hizo en cada sesión. Primera sesión: evaluamos, planificamos y arrancamos.');
 }
 
 function proximamente(titulo, texto) {
@@ -477,14 +479,14 @@ app.addEventListener('submit', ev => {
     datos.registros = datos.registros.filter(r => !(r.alumnaId === perfil.alumnaId && r.nombre === ej.nombre && r.fecha === hoy));
     datos.registros.push({ alumnaId: perfil.alumnaId, nombre: ej.nombre, fecha: hoy, peso, reps });
     ui.registrando = null;
-    guardar(); mostrarAviso('¡Bien! Registro guardado');
+    guardar(); mostrarAviso('Registro guardado. Sumaste progreso');
   }
 
   if (f.dataset.form === 'encuesta') {
     if (!ui.estrellas) return;
     datos.encuestas.push({ area: f.dataset.area, autor: perfil.nombre, fecha: fechaISO(), puntaje: ui.estrellas, comentario: String(campos.get('comentario') || '').trim().slice(0, 300) });
     ui.estrellas = 0; ui.comentario = '';
-    guardar(); mostrarAviso('¡Gracias por tu opinión!');
+    guardar(); mostrarAviso('Gracias. Tu respuesta ya llegó');
   }
 
   if (f.dataset.form === 'nueva-alumna') {
