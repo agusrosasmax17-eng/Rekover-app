@@ -3,8 +3,8 @@
    Todos los datos son INVENTADOS. Nada de datos reales.
    ========================================================= */
 
-const CLAVE_DATOS = 'rekover_datos_v2';
-const CLAVE_SESION = 'rekover_sesion_v2';
+const CLAVE_DATOS = 'rekover_datos_v3';
+const CLAVE_SESION = 'rekover_sesion_v3';
 
 // Disciplinas activas. Pilates aparece como "Próximamente".
 const DISCIPLINAS = ['Musculación', 'Funcional'];
@@ -35,6 +35,26 @@ const CATALOGO = {
   }
 };
 
+// Tests y ejercicios para la evaluación inicial: [nombre, unidad]
+const TESTS = [
+  ['Sentadilla: peso máximo (1RM estimado)', 'kg'],
+  ['Press de banca: peso máximo (1RM estimado)', 'kg'],
+  ['Peso muerto: peso máximo (1RM estimado)', 'kg'],
+  ['Flexiones de brazos máximas', 'reps'],
+  ['Sentadillas en 1 minuto', 'reps'],
+  ['Abdominales en 1 minuto', 'reps'],
+  ['Dominadas máximas', 'reps'],
+  ['Plancha (tiempo máximo)', 'seg'],
+  ['Sentarse y alcanzar (flexibilidad)', 'cm'],
+  ['Salto vertical', 'cm'],
+  ['Salto en largo sin carrera', 'cm'],
+  ['Test de Cooper (12 minutos)', 'm'],
+  ['Frecuencia cardíaca en reposo', 'ppm']
+];
+const UNIDADES = ['kg', 'reps', 'seg', 'cm', 'm', 'ppm', '%'];
+const OBJETIVOS = ['Fuerza', 'Aumento de masa muscular', 'Bajar de peso', 'Rendimiento deportivo', 'Recuperación de lesión', 'Salud general'];
+const NIVELES = ['Principiante', 'Intermedio', 'Avanzado'];
+
 // Busca a qué músculo pertenece un ejercicio de la lista base
 function musculoDe(disciplina, nombre) {
   const grupos = CATALOGO[disciplina] || {};
@@ -61,7 +81,8 @@ function itemRutina(disciplina, nombre, series, reps, peso, pausa, musculo) {
 function crearDatosDeEjemplo() {
   const M = 'Musculación', F = 'Funcional';
 
-  // Profesor y paciente. Las alumnas tienen su propio DNI y contraseña más abajo.
+  // Profesor y paciente. Las alumnas entran con su DNI (más abajo).
+  // El profesor crea a la alumna SIN contraseña: ella la crea en su primer ingreso (clave: null).
   // OJO: en este prototipo las contraseñas quedan guardadas en el navegador sin protección.
   // Sirven para probar, no son seguras para datos reales.
   const usuarios = [
@@ -73,7 +94,7 @@ function crearDatosDeEjemplo() {
     { id: 'a1', nombre: 'Sofía Gómez',     disciplina: M, dni: '30111222', clave: 'sofia123' },
     { id: 'a2', nombre: 'Valentina Ruiz',  disciplina: F, dni: '31222333', clave: 'vale123' },
     { id: 'a4', nombre: 'Lucía Fernández', disciplina: M, dni: '32444555', clave: 'lucia123' },
-    { id: 'a5', nombre: 'Martina Sosa',    disciplina: F, dni: '33555666', clave: 'martina123' }
+    { id: 'a5', nombre: 'Martina Sosa',    disciplina: F, dni: '33555666', clave: null } // todavía no entró
   ];
 
   // Rutinas: para cada alumna, una lista de ejercicios por día de la semana
@@ -137,16 +158,36 @@ function crearDatosDeEjemplo() {
   // Ejercicios que crea el profesor: { disciplina: { músculo: [[nombre, peso]] } }
   const ejerciciosPropios = {};
 
-  return { usuarios, alumnas, rutinas, registros, encuestas, notasProgreso, ejerciciosPropios };
+  // Evaluación inicial que carga el profesor para cada alumna
+  const evaluaciones = {
+    a1: {
+      fecha: registros[0].fecha, pesoCorporal: 62, altura: 165,
+      objetivo: 'Fuerza', nivel: 'Principiante',
+      antecedentes: 'Esguince de tobillo derecho hace 2 años, sin dolor actual.',
+      observaciones: 'Buena movilidad de cadera. Trabajar técnica de sentadilla antes de subir cargas.',
+      tests: [
+        { nombre: 'Sentadilla: peso máximo (1RM estimado)', unidad: 'kg', resultado: 45, nota: 'Técnica correcta hasta 40 kg' },
+        { nombre: 'Flexiones de brazos máximas', unidad: 'reps', resultado: 8, nota: 'Con rodillas apoyadas' },
+        { nombre: 'Plancha (tiempo máximo)', unidad: 'seg', resultado: 50, nota: '' },
+        { nombre: 'Salto vertical', unidad: 'cm', resultado: 28, nota: '' }
+      ]
+    }
+  };
+
+  return { usuarios, alumnas, rutinas, registros, encuestas, notasProgreso, ejerciciosPropios, evaluaciones };
 }
 
-// Busca a la persona que quiere ingresar. Devuelve su id o null.
+// Busca a la persona que quiere ingresar.
 // Profesor y paciente entran con su usuario; las alumnas, con su DNI.
+// Devuelve { id } si todo coincide, { crearClave: id } si es una alumna
+// que todavía no creó su contraseña, o null si no coincide.
 function buscarIngreso(datos, usuario, clave) {
   const u = usuario.trim().toLowerCase().replace(/\./g, '');
   const encontrado = datos.usuarios.find(x => x.usuario.toLowerCase() === u)
     || datos.alumnas.find(x => x.dni === u);
-  return encontrado && encontrado.clave === clave ? encontrado.id : null;
+  if (!encontrado) return null;
+  if (!encontrado.clave) return { crearClave: encontrado.id };
+  return encontrado.clave === clave ? { id: encontrado.id } : null;
 }
 
 // Lee los datos del navegador; si no hay, crea los de ejemplo

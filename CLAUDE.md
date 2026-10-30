@@ -65,6 +65,8 @@ Rekover es **Sports Recovery**. El PDF del manual es confidencial: no subirlo al
 
 - Hecho:
   - Ingreso con usuario o DNI y contraseña (la pantalla no muestra datos de nadie).
+  - El profesor crea a la alumna (nombre, DNI, disciplina) sin contraseña; ella crea su contraseña en su primer ingreso. El profesor puede restablecerla.
+  - Evaluación inicial por alumna (datos, objetivo, nivel, antecedentes, observaciones y tests/ejercicios con resultado; el profesor puede crear tests propios). La alumna la ve en Progreso, sin poder cambiarla.
   - Gimnasio para Musculación y Funcional. El profesor puede repetir ejercicios y crear ejercicios propios.
   - La alumna registra series, repeticiones, peso y pausa.
   - Progreso solo en kg: mejor peso, máx. repeticiones, aumento desde el inicio, explicación en palabras y mensaje del profesor.
@@ -80,7 +82,8 @@ Rekover es **Sports Recovery**. El PDF del manual es confidencial: no subirlo al
 | Alumna (Sofía Gómez) | `30111222` | `sofia123` |
 | Paciente (Martín López) | `28333444` | `martin123` |
 
-Otras alumnas: Valentina `31222333` / `vale123`, Lucía `32444555` / `lucia123`, Martina `33555666` / `martina123`.
+Otras alumnas: Valentina `31222333` / `vale123`, Lucía `32444555` / `lucia123`.
+Martina `33555666` todavía no tiene contraseña: sirve para probar el primer ingreso.
 Las contraseñas quedan en el navegador sin protección: es solo un prototipo. Para datos reales hará falta un servidor con ingreso seguro.
 
 ## Cómo está organizado el código
