@@ -64,6 +64,10 @@ Rekover es **Sports Recovery**. El PDF del manual es confidencial: no subirlo al
   - El kinesiólogo agrega turnos y registra lo hecho en cada sesión, y el paciente lo ve.
 - **Encuesta de satisfacción** en las dos partes (gimnasio y kinesiología).
 
+## Lenguaje
+
+- En la app se dice **"alumnos"** (hay alumnos y alumnas). Por dentro, el código y la base de datos siguen usando `alumna`/`alumnas` para no perder los datos ya cargados: no renombrar la colección.
+
 ## Estado actual
 
 - Hecho:
@@ -73,6 +77,8 @@ Rekover es **Sports Recovery**. El PDF del manual es confidencial: no subirlo al
   - Evaluación inicial por alumna (datos, objetivo, nivel, antecedentes, observaciones y tests/ejercicios con resultado; el profesor puede crear tests propios). La alumna la ve en Progreso, sin poder cambiarla.
   - Gimnasio para Musculación y Funcional. El profesor puede repetir ejercicios y crear ejercicios propios.
   - La alumna registra series, repeticiones, peso y pausa. Elige la fecha con un calendario: puede anotar hoy o cualquier día anterior (los días futuros solo se pueden mirar).
+  - El alumno también puede armar o cambiar su propia rutina desde su pantalla ("Cambiar mi rutina de este día"): elige si el cambio es solo para esa fecha o para todas las semanas. Puede agregar, quitar, ajustar y **cambiar un ejercicio por otro**. El profesor ve esos ejercicios con la etiqueta "Cambio del alumno". El alumno puede crear ejercicios propios solo para su rutina (no se suman a la lista compartida del profesor).
+  - Notificaciones dentro de la app (campanita con numerito, se actualiza sola mientras la app está abierta): el profesor recibe un aviso cuando un alumno registra lo que hizo, cambia su rutina o responde la encuesta; el alumno recibe un aviso cuando el profesor cambia su rutina, su evaluación o su mensaje. El mismo aviso no se repite antes de 10 minutos. Las notificaciones que suenan en el celular con la app cerrada (push) necesitarían el plan Blaze de Firebase: no están hechas.
   - Rutina semanal: lo que el profesor arma para un día de la semana se repite todas las semanas. Además puede cambiar una fecha puntual ("Modificar solo esta fecha") sin tocar las demás semanas, y volver a la semanal cuando quiera.
   - Progreso solo en kg: mejor peso, máx. repeticiones, aumento desde el inicio, explicación en palabras y mensaje del profesor.
   - Encuesta del gimnasio.
@@ -90,6 +96,8 @@ Rekover es **Sports Recovery**. El PDF del manual es confidencial: no subirlo al
 - `accesos/{dni}` → qué cuenta usa cada DNI.
 - `alumnas/{id}` → nombre, DNI, disciplina, cuenta (`uid`), código de primer ingreso, `rutinas` (semanal: clave 0–6 = domingo–sábado), `cambios` (rutinas especiales por fecha `AAAA-MM-DD`), evaluación inicial y mensaje del profe.
 - `alumnas/{id}/registros/{fecha_ejercicio}` → lo que registró la alumna.
+- `alumnas/{id}/avisos/{id}` → notificaciones para el alumno (las crea el profesor).
+- `avisosProfe/{id}` → notificaciones para el profesor (las crean los alumnos).
 - `encuestas/{id}` → respuestas de la encuesta.
 - `config/ejercicios` → ejercicios propios del profesor.
 

@@ -29,25 +29,42 @@ service cloud.firestore {
       allow write: if esProfe();
     }
 
-    // Ficha de cada alumna: el profesor ve y cambia todo; cada alumna solo lee la suya
-    // y lo único que puede cambiar es marcar que ya creó su contraseña.
+    // Ficha de cada alumno (la colección se llama "alumnas" por los datos ya cargados).
+    // El profesor ve y cambia todo. Cada alumno solo lee la suya, y solo puede cambiar
+    // su rutina (semanal y por fecha) y marcar que ya creó su contraseña.
     match /alumnas/{alumnaId} {
       allow read: if esProfe() || (request.auth != null && resource.data.uid == request.auth.uid);
       allow create, delete: if esProfe();
       allow update: if esProfe() || (
         request.auth != null
         && resource.data.uid == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['debeCambiarClave', 'codigoInicial'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['debeCambiarClave', 'codigoInicial', 'rutinas', 'cambios'])
         && request.resource.data.debeCambiarClave == false
       );
 
-      // Lo que la alumna registra cada día
+      // Lo que el alumno registra cada día
       match /registros/{registroId} {
         allow read, write: if esProfe() || esLaAlumna(alumnaId);
       }
+
+      // Notificaciones para el alumno: las crea el profesor; el alumno solo las marca como leídas
+      match /avisos/{avisoId} {
+        allow read: if esProfe() || esLaAlumna(alumnaId);
+        allow create, delete: if esProfe();
+        allow update: if esLaAlumna(alumnaId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['leido']);
+      }
     }
 
-    // Encuestas: cada alumna crea las suyas y solo ve las suyas; el profesor ve todas
+    // Notificaciones para el profesor: cada alumno solo puede mandar a su nombre
+    match /avisosProfe/{avisoId} {
+      allow read, update, delete: if esProfe();
+      allow create: if request.resource.data.keys().hasOnly(['alumnaId', 'texto', 'fecha', 'leido'])
+        && request.resource.data.leido == false
+        && esLaAlumna(request.resource.data.alumnaId);
+    }
+
+    // Encuestas: cada alumno crea las suyas y solo ve las suyas; el profesor ve todas
     match /encuestas/{encuestaId} {
       allow read: if esProfe() || (request.auth != null && resource.data.uid == request.auth.uid);
       allow create: if request.auth != null
@@ -56,9 +73,10 @@ service cloud.firestore {
       allow update, delete: if esProfe();
     }
 
-    // Ejercicios propios del profesor
+    // Ejercicios propios del profesor (los alumnos los pueden ver para armar su rutina)
     match /config/{documento} {
-      allow read, write: if esProfe();
+      allow read: if request.auth != null;
+      allow write: if esProfe();
     }
 
     // Todo lo demás está cerrado

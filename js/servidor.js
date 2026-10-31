@@ -7,8 +7,13 @@
    - alumnas/{id}             → datos de la alumna, rutina semanal, cambios por fecha,
                                 evaluación y mensaje del profe
    - alumnas/{id}/registros   → lo que la alumna registró cada día
+   - alumnas/{id}/avisos      → notificaciones para el alumno (las manda el profesor)
+   - avisosProfe/{id}         → notificaciones para el profesor (las mandan los alumnos)
    - encuestas/{id}           → respuestas de la encuesta de satisfacción
    - config/ejercicios        → ejercicios propios que creó el profesor
+
+   Por dentro la colección se sigue llamando "alumnas" para no perder los datos
+   ya cargados, pero en la app se muestra "alumnos".
    ========================================================= */
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
@@ -18,7 +23,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
   initializeFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, addDoc,
-  query, where, limit, deleteField
+  query, where, limit, orderBy, onSnapshot, writeBatch, deleteField
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { firebaseConfig, PROFESOR_EMAIL, NOMBRE_PROFESOR, DOMINIO_ALUMNAS } from './config.js';
 
@@ -85,10 +90,12 @@ export async function cargar(usuario) {
   if (propia.empty) throw { code: 'rekover/sin-ficha' };
   const ficha = propia.docs[0];
   sumarAlumna(ficha);
-  const [registros, encuestas] = await Promise.all([
+  const [registros, encuestas, ejercicios] = await Promise.all([
     getDocs(collection(db, 'alumnas', ficha.id, 'registros')),
-    getDocs(query(collection(db, 'encuestas'), where('uid', '==', usuario.uid)))
+    getDocs(query(collection(db, 'encuestas'), where('uid', '==', usuario.uid))),
+    getDoc(doc(db, 'config', 'ejercicios'))
   ]);
+  if (ejercicios.exists()) datos.ejerciciosPropios = ejercicios.data().lista || {};
   datos.registros = registros.docs.map(d => ({ alumnaId: ficha.id, ...d.data() }));
   datos.encuestas = encuestas.docs.map(d => d.data()).sort((a, b) => a.fecha.localeCompare(b.fecha));
   const alumna = datos.alumnas[0];
@@ -156,4 +163,34 @@ export function agregarEncuesta(encuesta) {
 
 export function guardarEjerciciosPropios(lista) {
   return setDoc(doc(db, 'config', 'ejercicios'), { lista });
+}
+
+/* ---------- Notificaciones (la campanita) ---------- */
+
+function carpetaDeAvisos(perfil) {
+  return perfil.rol === 'profesor' ? collection(db, 'avisosProfe') : collection(db, 'alumnas', perfil.alumnaId, 'avisos');
+}
+
+// Escucha las notificaciones y avisa cada vez que llega una nueva (mientras la app está abierta).
+// Devuelve una función para dejar de escuchar.
+export function escucharAvisos(perfil, alCambiar) {
+  return onSnapshot(query(carpetaDeAvisos(perfil), orderBy('fecha', 'desc'), limit(30)),
+    foto => alCambiar(foto.docs.map(d => ({ id: d.id, ...d.data() }))),
+    error => console.error(error));
+}
+
+export function avisarAlProfe(alumnaId, texto) {
+  return addDoc(collection(db, 'avisosProfe'), { alumnaId, texto, fecha: new Date().toISOString(), leido: false });
+}
+
+export function avisarAlAlumno(alumnaId, texto) {
+  return addDoc(collection(db, 'alumnas', alumnaId, 'avisos'), { texto, fecha: new Date().toISOString(), leido: false });
+}
+
+export function marcarLeidos(perfil, ids) {
+  if (!ids.length) return Promise.resolve();
+  const lote = writeBatch(db);
+  const carpeta = carpetaDeAvisos(perfil);
+  ids.forEach(id => lote.update(doc(carpeta, id), { leido: true }));
+  return lote.commit();
 }

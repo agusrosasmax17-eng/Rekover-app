@@ -11,6 +11,8 @@ import * as servidor from './servidor.js';
 let datos = { alumnas: [], rutinas: {}, cambios: {}, registros: [], encuestas: [], notasProgreso: {}, ejerciciosPropios: {}, evaluaciones: {} };
 let perfil = null;
 let cargando = true; // mientras se conecta con el servidor
+let avisos = [];             // notificaciones de la campanita (llegan solas del servidor)
+let dejarDeEscuchar = null;  // corta la escucha de notificaciones al salir
 
 // Estado de la pantalla (qué pestaña está abierta, qué alumna está elegida, etc.)
 const ui = {
@@ -21,7 +23,7 @@ const ui = {
   seccionAlumna: 'rutina',  // en la ficha de la alumna: 'rutina' o 'evaluacion'
   agregandoTest: false,     // si está abierto el formulario para sumar un test
   testElegido: TESTS[0][0], // test elegido en ese formulario ('otro' = crear uno propio)
-  filtro: 'Todas',          // filtro de disciplina en la lista de alumnas
+  filtro: 'Todos',          // filtro de disciplina en la lista de alumnas
   alumnaId: null,           // alumna elegida por el profesor
   dia: new Date().getDay(), // día de la semana que edita el profesor en la rutina semanal
   modoRutina: 'semanal',    // el profesor edita la rutina 'semanal' o la de una 'fecha' puntual
@@ -31,7 +33,11 @@ const ui = {
   creando: false,           // si está abierto el formulario de ejercicio propio
   musculo: null,            // músculo elegido en esa lista
   nuevaAlumna: false,       // si está abierto el formulario de nueva alumna
-  registrando: null,        // índice del ejercicio que la alumna está registrando
+  registrando: null,        // índice del ejercicio que el alumno está registrando
+  editando: false,          // el alumno está cambiando su propia rutina
+  eligiendoAlcance: false,  // el alumno elige si cambia solo ese día o todas las semanas
+  reemplazando: null,       // índice del ejercicio que se está cambiando por otro
+  verAvisos: false,         // está abierta la lista de notificaciones
   ejercicioGrafico: null,   // ejercicio elegido en Progreso
   estrellas: 0,             // puntaje elegido en la encuesta
   comentario: ''            // comentario que se está escribiendo en la encuesta
@@ -46,20 +52,53 @@ function esc(texto) {
   return String(texto ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-// Guarda en el servidor la ficha de una alumna (rutina, evaluación y mensaje).
+// Guarda en el servidor la ficha de un alumno y avisa a la otra persona (campanita).
+// tipo: 'rutina', 'evaluacion' o 'nota' (para armar el texto de la notificación).
 // Espera medio segundo para juntar varios toques seguidos de − / + en un solo guardado.
 const guardadosPendientes = {};
-function guardarFicha(alumnaId) {
+const avisosPendientes = {};
+function guardarFicha(alumnaId, tipo = 'rutina') {
+  avisosPendientes[alumnaId] = textoDeAviso(tipo);
   clearTimeout(guardadosPendientes[alumnaId]);
   guardadosPendientes[alumnaId] = setTimeout(() => {
     delete guardadosPendientes[alumnaId];
-    servidor.guardarFicha(alumnaId, {
-      rutinas: datos.rutinas[alumnaId] || {},
-      cambios: datos.cambios[alumnaId] || {},
-      notaProgreso: datos.notasProgreso[alumnaId] || '',
-      evaluacion: datos.evaluaciones[alumnaId] || null
-    }).catch(mostrarError);
+    // El alumno solo puede guardar su rutina; el profesor guarda todo
+    const ficha = { rutinas: datos.rutinas[alumnaId] || {}, cambios: datos.cambios[alumnaId] || {} };
+    if (perfil.rol === 'profesor') {
+      ficha.notaProgreso = datos.notasProgreso[alumnaId] || '';
+      ficha.evaluacion = datos.evaluaciones[alumnaId] || null;
+    }
+    servidor.guardarFicha(alumnaId, ficha)
+      .then(() => enviarAviso(alumnaId, avisosPendientes[alumnaId]))
+      .catch(mostrarError);
   }, 500);
+}
+
+// "lunes", "martes"… "sábados", "domingos"
+function diaEnPlural(dia) { return DIAS[dia].toLowerCase() + (dia === 0 || dia === 6 ? 's' : ''); }
+
+// Texto de la notificación según quién cambió qué
+function textoDeAviso(tipo) {
+  const cual = ui.modoRutina === 'fecha' ? `rutina del ${fechaLarga(ui.fechaRutina)}` : `rutina de los ${diaEnPlural(ui.dia)}`;
+  if (perfil.rol === 'profesor') {
+    if (tipo === 'evaluacion') return 'Tu profe actualizó tu evaluación inicial.';
+    if (tipo === 'nota') return 'Tu profe te dejó un mensaje sobre tu progreso.';
+    return `Tu profe actualizó tu ${cual}.`;
+  }
+  return `${perfil.nombre} cambió su ${cual}.`;
+}
+
+// Manda la notificación a la otra persona. Si ya se mandó el mismo aviso
+// hace menos de 10 minutos, no se repite (para no llenar la campanita).
+const ultimosAvisos = {};
+function enviarAviso(alumnaId, texto) {
+  delete avisosPendientes[alumnaId];
+  if (!texto) return;
+  const clave = alumnaId + texto;
+  if (Date.now() - (ultimosAvisos[clave] || 0) < 10 * 60e3) return;
+  ultimosAvisos[clave] = Date.now();
+  const envio = perfil.rol === 'profesor' ? servidor.avisarAlAlumno(alumnaId, texto) : servidor.avisarAlProfe(alumnaId, texto);
+  envio.catch(e => console.error(e));
 }
 
 // Traduce los errores del servidor a mensajes simples
@@ -70,7 +109,7 @@ function mensajeError(e) {
   if (codigo === 'auth/too-many-requests') return 'Hubo demasiados intentos. Esperá unos minutos y probá de nuevo.';
   if (codigo === 'auth/network-request-failed' || codigo === 'unavailable') return 'No hay conexión a internet. Revisala e intentá de nuevo.';
   if (codigo === 'rekover/sin-ficha') return 'Tu cuenta no tiene una ficha asignada. Consultá con tu profe.';
-  if (codigo === 'rekover/dni-repetido') return 'Ya hay una alumna con ese DNI.';
+  if (codigo === 'rekover/dni-repetido') return 'Ya hay un alumno con ese DNI.';
   if (codigo === 'auth/requires-recent-login') return 'Por seguridad, salí y volvé a entrar con tu código para crear la contraseña.';
   if (codigo === 'permission-denied') return 'No tenés permiso para hacer esto.';
   if (codigo === 'auth/configuration-not-found' || codigo === 'auth/operation-not-allowed')
@@ -149,9 +188,10 @@ function dibujar() {
   if (!perfil) { app.innerHTML = pantallaIngreso(); return; }
   if (perfil.debeCambiarClave) { app.innerHTML = pantallaCrearClave(); return; }
   let contenido = '';
-  if (perfil.rol === 'alumna') contenido = pantallaAlumna();
-  if (perfil.rol === 'profesor') contenido = pantallaProfesor();
-  if (perfil.rol === 'paciente') contenido = pantallaPaciente();
+  if (ui.verAvisos) contenido = pantallaAvisos();
+  else if (perfil.rol === 'alumna') contenido = pantallaAlumna();
+  else if (perfil.rol === 'profesor') contenido = pantallaProfesor();
+  else if (perfil.rol === 'paciente') contenido = pantallaPaciente();
   app.innerHTML = encabezado() + `<section class="contenido">${contenido}</section>` + menuInferior();
 }
 
@@ -159,16 +199,53 @@ function encabezado() {
   return `<header class="encabezado">
     ${logo(true)}
     <div class="encabezado-usuario">
-      <span>${esc(perfil.nombre)}</span>
+      <button class="campana ${ui.verAvisos ? 'activa' : ''}" data-accion="avisos" aria-label="Notificaciones">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.84V3.5a1.5 1.5 0 0 0-3 0v.66A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z"/></svg>
+        <span class="campana-numero">${numeroCampana()}</span>
+      </button>
+      <span class="encabezado-nombre">${esc(perfil.nombre)}</span>
       <button class="boton-texto" data-accion="salir">Salir</button>
     </div>
   </header>`;
 }
 
+/* ---------- Notificaciones (campanita) ---------- */
+
+function numeroCampana() {
+  const sinLeer = avisos.filter(a => !a.leido).length;
+  return sinLeer ? (sinLeer > 9 ? '9+' : sinLeer) : '';
+}
+
+// Actualiza solo el numerito, sin redibujar la pantalla (para no borrar lo que se está escribiendo)
+function actualizarCampana() {
+  const numero = document.querySelector('.campana-numero');
+  if (numero) numero.textContent = numeroCampana();
+  if (ui.verAvisos) dibujar();
+}
+
+function haceCuanto(iso) {
+  const minutos = Math.round((Date.now() - new Date(iso)) / 60e3);
+  if (minutos < 1) return 'recién';
+  if (minutos < 60) return `hace ${minutos} min`;
+  if (minutos < 24 * 60) return `hace ${Math.round(minutos / 60)} h`;
+  return formatoFecha(iso.slice(0, 10));
+}
+
+function pantallaAvisos() {
+  return `<button class="boton-texto volver" data-accion="avisos">‹ Volver</button>
+    <h1>Notificaciones</h1>
+    ${avisos.map(a => {
+      const irA = perfil.rol === 'profesor' && alumnaPorId(a.alumnaId);
+      return `<${irA ? `button data-accion="ir-alumno" data-valor="${esc(a.alumnaId)}"` : 'div'} class="tarjeta aviso-item ${a.leido ? '' : 'nuevo'}">
+        <p>${esc(a.texto)}</p><small>${haceCuanto(a.fecha)}${irA ? ' · Ver ficha ›' : ''}</small>
+      </${irA ? 'button' : 'div'}>`;
+    }).join('') || '<div class="tarjeta vacio">Todavía no tenés notificaciones.</div>'}`;
+}
+
 // Pestañas de abajo: cada perfil ve solo las suyas
 const PESTANAS = {
   alumna:   [['hoy', 'Rutina'], ['progreso', 'Progreso'], ['encuesta', 'Encuesta']],
-  profesor: [['alumnas', 'Alumnas'], ['encuestas', 'Encuestas'], ['kinesio', 'Kinesio']],
+  profesor: [['alumnas', 'Alumnos'], ['encuestas', 'Encuestas'], ['kinesio', 'Kinesio']],
   paciente: [['turnos', 'Turnos']]
 };
 
@@ -269,6 +346,28 @@ function alumnaHoy() {
   const esFutura = fecha > hoy;
   const especial = !!cambiosDe(alumna.id)[fecha];
   const sePuedeRegistrar = !esFutura;
+  const titulo = `<h1>${esHoy ? 'Mi rutina de hoy' : 'Rutina del ' + fechaLarga(fecha)}</h1>
+    <p class="suave">${esc(alumna.disciplina)}</p>
+    ${selectorFecha('fecha-alumna', fecha, 'Elegí el día que querés ver o anotar')}`;
+
+  // Cambiando su propia rutina
+  if (ui.editando) {
+    return titulo + `<div class="aviso-especial fila-separada">
+        <span>Estás cambiando ${ui.modoRutina === 'fecha' ? 'solo el ' + fechaLarga(fecha) : 'todos los ' + diaEnPlural(diaDeSemana(fecha))}.</span>
+        <button class="boton" data-accion="terminar-edicion">Listo</button>
+      </div>` + editorRutina(alumna);
+  }
+  // Eligiendo si cambia solo ese día o todas las semanas
+  if (ui.eligiendoAlcance) {
+    return titulo + `<div class="tarjeta">
+        <h3>¿Qué querés cambiar?</h3>
+        <div class="alcance">
+          <button class="boton" data-accion="editar-mi-rutina" data-valor="fecha">Solo el ${fechaLarga(fecha)}</button>
+          <button class="boton secundario" data-accion="editar-mi-rutina" data-valor="semanal">Todos los ${diaEnPlural(diaDeSemana(fecha))}</button>
+          <button class="boton-texto" data-accion="cancelar-edicion">Cancelar</button>
+        </div>
+      </div>`;
+  }
 
   const tarjetas = rutina.map((ej, i) => {
     const hecho = datos.registros.find(r => r.alumnaId === alumna.id && r.nombre === ej.nombre && r.fecha === fecha);
@@ -308,12 +407,11 @@ function alumnaHoy() {
     </article>`;
   }).join('');
 
-  return `<h1>${esHoy ? 'Mi rutina de hoy' : 'Rutina del ' + fechaLarga(fecha)}</h1>
-    <p class="suave">${esc(alumna.disciplina)}</p>
-    ${selectorFecha('fecha-alumna', fecha, 'Elegí el día que querés ver o anotar')}
-    ${especial ? '<p class="aviso-especial">Rutina especial para este día, armada por tu profe.</p>' : ''}
+  return titulo + `
+    ${especial ? '<p class="aviso-especial">Rutina especial para este día.</p>' : ''}
     ${rutina.length ? tarjetas : `<div class="tarjeta vacio">${esHoy ? 'Hoy no tenés rutina: día de recuperación. Mañana seguimos.' : 'No hay rutina para este día.'}</div>`}
-    ${esFutura && rutina.length ? '<p class="suave centro">Este día todavía no llegó: vas a poder anotar lo que hiciste cuando llegue.</p>' : ''}`;
+    ${esFutura && rutina.length ? '<p class="suave centro">Este día todavía no llegó: vas a poder anotar lo que hiciste cuando llegue.</p>' : ''}
+    <button class="boton secundario ancho" data-accion="cambiar-mi-rutina">${rutina.length ? 'Cambiar mi rutina de este día' : 'Armar mi rutina para este día'}</button>`;
 }
 
 function alumnaProgreso() {
@@ -448,17 +546,17 @@ function pantallaProfesor() {
 }
 
 function profesorAlumnas() {
-  const filtros = ['Todas', ...DISCIPLINAS, ...DISCIPLINAS_PROXIMAMENTE];
+  const filtros = ['Todos', ...DISCIPLINAS, ...DISCIPLINAS_PROXIMAMENTE];
   const chips = `<div class="chips">${filtros.map(d =>
     `<button class="chip ${ui.filtro === d ? 'activa' : ''}" data-accion="filtro" data-valor="${d}">${d}</button>`).join('')}
   </div>`;
-  const encabezadoLista = `<h1>Gimnasio</h1><p class="suave">Paso 1: elegí la alumna para armar su rutina.</p>${chips}`;
+  const encabezadoLista = `<h1>Gimnasio</h1><p class="suave">Paso 1: elegí el alumno para armar su rutina.</p>${chips}`;
 
   if (DISCIPLINAS_PROXIMAMENTE.includes(ui.filtro)) {
     return encabezadoLista + `<div class="tarjeta vacio"><span class="etiqueta-oro">Próximamente</span><p>${ui.filtro} se suma en una próxima versión de la app.</p></div>`;
   }
 
-  const lista = datos.alumnas.filter(a => ui.filtro === 'Todas' || a.disciplina === ui.filtro);
+  const lista = datos.alumnas.filter(a => ui.filtro === 'Todos' || a.disciplina === ui.filtro);
   return encabezadoLista + `
     ${lista.map(a => {
       const dias = Object.keys(datos.rutinas[a.id] || {}).filter(d => datos.rutinas[a.id][d].length).length;
@@ -468,16 +566,16 @@ function profesorAlumnas() {
           ${a.debeCambiarClave ? '<em class="etiqueta-propio">Falta su primer ingreso</em>' : ''}</span>
         <span class="flecha">›</span>
       </button>`;
-    }).join('') || (datos.alumnas.length ? '<div class="tarjeta vacio">No hay alumnas en esta disciplina.</div>'
-      : `<div class="tarjeta vacio"><p>Todavía no cargaste alumnas.</p>
-          <button class="boton secundario" data-accion="cargar-ejemplo" ${ui.ocupado ? 'disabled' : ''}>${ui.ocupado ? 'Cargando…' : 'Cargar 3 alumnas de ejemplo para probar'}</button></div>`)}
+    }).join('') || (datos.alumnas.length ? '<div class="tarjeta vacio">No hay alumnos en esta disciplina.</div>'
+      : `<div class="tarjeta vacio"><p>Todavía no cargaste alumnos.</p>
+          <button class="boton secundario" data-accion="cargar-ejemplo" ${ui.ocupado ? 'disabled' : ''}>${ui.ocupado ? 'Cargando…' : 'Cargar 3 alumnos de ejemplo para probar'}</button></div>`)}
     ${ui.nuevaAlumna ? `
       <form class="tarjeta" data-form="nueva-alumna">
-        <h3>Nueva alumna</h3>
+        <h3>Nuevo alumno</h3>
         <label class="campo">Nombre y apellido<input name="nombre" required maxlength="40" placeholder="Ej.: Ana Torres"></label>
         <label class="campo">DNI (sin puntos) — es su usuario para ingresar
           <input name="dni" required inputmode="numeric" pattern="[0-9]{7,8}" maxlength="8" placeholder="Ej.: 35123456"></label>
-        <p class="nota-chica">La app genera un código de primer ingreso. Ella entra con su DNI y ese código, y crea su propia contraseña.</p>
+        <p class="nota-chica">La app genera un código de primer ingreso. Entra con su DNI y ese código, y crea su propia contraseña.</p>
         <label class="campo">Disciplina
           <select name="disciplina">${DISCIPLINAS.map(d => `<option>${d}</option>`).join('')}</select>
         </label>
@@ -487,14 +585,14 @@ function profesorAlumnas() {
           <button type="submit" class="boton" ${ui.ocupado ? 'disabled' : ''}>${ui.ocupado ? 'Creando…' : 'Agregar'}</button>
         </div>
       </form>`
-    : '<button class="boton secundario ancho" data-accion="abrir-nueva-alumna">+ Nueva alumna</button>'}`;
+    : '<button class="boton secundario ancho" data-accion="abrir-nueva-alumna">+ Nuevo alumno</button>'}`;
 }
 
 // Ficha de una alumna: datos de su cuenta y pestañas Rutina / Evaluación inicial
 function profesorFichaAlumna() {
   const alumna = alumnaPorId(ui.alumnaId);
   const secciones = [['rutina', 'Rutina'], ['evaluacion', 'Evaluación inicial']];
-  return `<button class="boton-texto volver" data-accion="volver">‹ Alumnas</button>
+  return `<button class="boton-texto volver" data-accion="volver">‹ Alumnos</button>
     <h1>${esc(alumna.nombre)}</h1>
     <p class="suave">${esc(alumna.disciplina)} · DNI ${esc(alumna.dni)}</p>
     ${alumna.debeCambiarClave ? `
@@ -504,7 +602,7 @@ function profesorFichaAlumna() {
         <p>Pasáselo a ${esc(alumna.nombre.split(' ')[0])}: entra con su DNI y este código, y crea su propia contraseña.</p>
       </div>` : ''}
     <div class="cuenta">
-      <span>${alumna.debeCambiarClave ? 'Todavía no creó su contraseña.' : 'Contraseña creada por ella.'}</span>
+      <span>${alumna.debeCambiarClave ? 'Todavía no creó su contraseña.' : 'Ya creó su contraseña.'}</span>
       <button class="boton-texto" data-accion="restablecer-clave" ${ui.ocupado ? 'disabled' : ''}>${alumna.debeCambiarClave ? 'Generar otro código' : 'Restablecer'}</button>
     </div>
     <div class="pestanas-internas">${secciones.map(([id, texto]) =>
@@ -540,13 +638,20 @@ function profesorRutina(alumna) {
     encabezado += `<div class="aviso-especial fila-separada"><span>Rutina especial solo para este día.</span>
       <button class="boton-texto" data-accion="quitar-cambios">Volver a la semanal</button></div>`;
   }
-  const rutina = rutinaEditable(alumna.id);
+  return elegirModo + encabezado + editorRutina(alumna) + notaProgreso(alumna);
+}
 
-  const items = rutina.map((ej, i) => `
+// Lista de ejercicios para armar o cambiar una rutina (la usan el profesor y el alumno)
+function editorRutina(alumna) {
+  const items = rutinaEditable(alumna.id).map((ej, i) => `
     <article class="tarjeta ejercicio">
       <div class="ejercicio-titulo">
-        <div><small class="musculo">${esc(ej.musculo)}</small><h3>${esc(ej.nombre)}</h3></div>
-        <button class="boton-icono" data-accion="quitar" data-valor="${i}" aria-label="Quitar ejercicio">✕</button>
+        <div><small class="musculo">${esc(ej.musculo)}</small><h3>${esc(ej.nombre)}</h3>
+          ${ej.porAlumno && perfil.rol === 'profesor' ? '<em class="etiqueta-propio">Cambio del alumno</em>' : ''}</div>
+        <div class="acciones-ejercicio">
+          <button class="boton-texto" data-accion="reemplazar" data-valor="${i}">Cambiar</button>
+          <button class="boton-icono" data-accion="quitar" data-valor="${i}" aria-label="Quitar ejercicio">✕</button>
+        </div>
       </div>
       <div class="ajustes">
         ${ajuste(i, 'series', 'Series', ej.series)}
@@ -555,11 +660,8 @@ function profesorRutina(alumna) {
         ${ajuste(i, 'pausa', 'Pausa', formatoPausa(ej.pausa))}
       </div>
     </article>`).join('');
-
-  return elegirModo + encabezado + `
-    ${items || '<div class="tarjeta vacio">Este día no tiene ejercicios todavía.</div>'}
-    ${ui.agregando ? selectorEjercicios(alumna) : '<button class="boton ancho" data-accion="abrir-agregar">+ Agregar ejercicio</button>'}
-    ${notaProgreso(alumna)}`;
+  return `${items || '<div class="tarjeta vacio">Este día no tiene ejercicios todavía.</div>'}
+    ${ui.agregando ? selectorEjercicios(alumna) : '<button class="boton ancho" data-accion="abrir-agregar">+ Agregar ejercicio</button>'}`;
 }
 
 // Mensaje que el profesor le deja a la alumna en su pantalla de Progreso
@@ -648,9 +750,11 @@ const MINIMOS = { series: 1, reps: 1, peso: 0, pausa: 0 };
 function selectorEjercicios(alumna) {
   const musculos = Object.keys(CATALOGO[alumna.disciplina]);
   if (!musculos.includes(ui.musculo)) ui.musculo = musculos[0];
-  const yaEstan = rutinaEditable(alumna.id).map(e => e.nombre);
+  const rutina = rutinaEditable(alumna.id);
+  const yaEstan = rutina.map(e => e.nombre);
+  const cambiando = ui.reemplazando !== null && rutina[ui.reemplazando];
   return `<div class="tarjeta selector">
-    <div class="fila-separada"><h3>Agregar ejercicio</h3>
+    <div class="fila-separada"><h3>${cambiando ? `Cambiar ${esc(cambiando.nombre)} por…` : 'Agregar ejercicio'}</h3>
       <button class="boton-icono" data-accion="cerrar-agregar" aria-label="Cerrar">✕</button></div>
     <div class="chips">${musculos.map(m =>
       `<button class="chip ${ui.musculo === m ? 'activa' : ''}" data-accion="musculo" data-valor="${esc(m)}">${esc(m)}</button>`).join('')}
@@ -668,7 +772,7 @@ function selectorEjercicios(alumna) {
         <label class="campo">Peso sugerido (kg, 0 = sin peso)<input name="peso" type="number" min="0" step="0.5" inputmode="decimal" value="0"></label>
         <div class="fila-botones">
           <button type="button" class="boton secundario" data-accion="cerrar-crear">Cancelar</button>
-          <button type="submit" class="boton">Crear y agregar</button>
+          <button type="submit" class="boton">${cambiando ? 'Crear y cambiar' : 'Crear y agregar'}</button>
         </div>
       </form>`
     : `<button class="boton secundario ancho crear-boton" data-accion="abrir-crear">+ Crear mi propio ejercicio</button>`}
@@ -704,7 +808,7 @@ app.addEventListener('click', ev => {
   if (!b || b.disabled) return;
   const v = b.dataset.valor;
   // Al cambiar de pantalla, se vuelve arriba de todo
-  if (['pestana', 'elegir-alumna', 'volver', 'seccion-alumna'].includes(b.dataset.accion)) window.scrollTo(0, 0);
+  if (['pestana', 'elegir-alumna', 'volver', 'seccion-alumna', 'avisos', 'ir-alumno'].includes(b.dataset.accion)) window.scrollTo(0, 0);
 
   switch (b.dataset.accion) {
     case 'salir':
@@ -712,14 +816,26 @@ app.addEventListener('click', ev => {
       servidor.salir(); // al cerrar la sesión, alCambiarSesion vuelve a la pantalla de ingreso
       return;
     case 'cargar-ejemplo': cargarEjemplo(); return;
+    case 'avisos': {
+      ui.verAvisos = !ui.verAvisos;
+      // Al abrir la lista, las notificaciones quedan como leídas
+      const sinLeer = avisos.filter(a => !a.leido).map(a => a.id);
+      if (ui.verAvisos && sinLeer.length) servidor.marcarLeidos(perfil, sinLeer).catch(e => console.error(e));
+      break;
+    }
+    case 'ir-alumno':
+      ui.verAvisos = false; ui.pestana = 'alumnas'; ui.alumnaId = v; ui.seccionAlumna = 'rutina';
+      ui.agregando = false; ui.creando = false; ui.modoRutina = 'semanal'; ui.dia = new Date().getDay(); ui.fechaRutina = fechaISO();
+      break;
     case 'pestana':
+      ui.verAvisos = false; ui.editando = false; ui.eligiendoAlcance = false; ui.reemplazando = null;
       ui.pestana = v; ui.alumnaId = null; ui.agregando = false; ui.creando = false; ui.registrando = null;
       ui.dia = new Date().getDay(); ui.fecha = fechaISO(); ui.estrellas = 0; ui.comentario = '';
       break;
     case 'dia':
       ui.dia = Number(v); ui.registrando = null;
       break;
-    case 'fecha-alumna': ui.fecha = v; ui.registrando = null; break;
+    case 'fecha-alumna': ui.fecha = v; ui.registrando = null; ui.editando = false; ui.eligiendoAlcance = false; ui.agregando = false; break;
     case 'fecha-rutina': ui.fechaRutina = v; ui.agregando = false; break;
     case 'modo-rutina': ui.modoRutina = v; ui.agregando = false; ui.creando = false; break;
     case 'personalizar-fecha': {
@@ -732,7 +848,26 @@ app.addEventListener('click', ev => {
       if (!confirm(`¿Borrar los cambios del ${fechaLarga(ui.fechaRutina)} y volver a la rutina semanal?`)) return;
       delete cambiosDe(ui.alumnaId)[ui.fechaRutina];
       guardarFicha(ui.alumnaId); mostrarAviso('Volvió a la rutina semanal'); return;
-    // Alumna
+    // Alumno: cambiar su propia rutina
+    case 'cambiar-mi-rutina':
+      ui.alumnaId = perfil.alumnaId; ui.registrando = null;
+      // Si ese día ya tiene una rutina especial, se cambia esa directamente
+      if (cambiosDe(perfil.alumnaId)[ui.fecha]) { ui.editando = true; ui.modoRutina = 'fecha'; ui.fechaRutina = ui.fecha; }
+      else ui.eligiendoAlcance = true;
+      break;
+    case 'editar-mi-rutina':
+      ui.eligiendoAlcance = false; ui.editando = true; ui.agregando = false; ui.reemplazando = null;
+      ui.modoRutina = v; ui.fechaRutina = ui.fecha; ui.dia = diaDeSemana(ui.fecha);
+      if (v === 'fecha') {
+        cambiosDe(perfil.alumnaId)[ui.fecha] = JSON.parse(JSON.stringify(rutinaDe(perfil.alumnaId, ui.dia)));
+        guardarFicha(perfil.alumnaId);
+      }
+      break;
+    case 'cancelar-edicion': ui.eligiendoAlcance = false; break;
+    case 'terminar-edicion':
+      ui.editando = false; ui.agregando = false; ui.creando = false; ui.reemplazando = null;
+      mostrarAviso('Rutina guardada'); return;
+    // Alumno: registrar
     case 'registrar': ui.registrando = Number(v); break;
     case 'cancelar-registro': ui.registrando = null; break;
     case 'estrella': ui.estrellas = Number(v); break;
@@ -759,19 +894,20 @@ app.addEventListener('click', ev => {
     case 'cerrar-test': ui.agregandoTest = false; break;
     case 'quitar-test':
       datos.evaluaciones[ui.alumnaId].tests.splice(Number(v), 1);
-      guardarFicha(ui.alumnaId);
+      guardarFicha(ui.alumnaId, 'evaluacion');
       break;
     case 'abrir-nueva-alumna': ui.nuevaAlumna = true; ui.errorAlumna = ''; break;
     case 'cerrar-nueva-alumna': ui.nuevaAlumna = false; break;
-    case 'abrir-agregar': ui.agregando = true; break;
-    case 'cerrar-agregar': ui.agregando = false; ui.creando = false; break;
+    case 'abrir-agregar': ui.agregando = true; ui.reemplazando = null; break;
+    case 'cerrar-agregar': ui.agregando = false; ui.creando = false; ui.reemplazando = null; break;
+    case 'reemplazar': ui.agregando = true; ui.creando = false; ui.reemplazando = Number(v); break;
     case 'abrir-crear': ui.creando = true; break;
     case 'cerrar-crear': ui.creando = false; break;
     case 'musculo': ui.musculo = v; ui.creando = false; break;
     case 'agregar': {
       const alumna = alumnaPorId(ui.alumnaId);
-      rutinaEditable(alumna.id).push(itemRutina(alumna.disciplina, v, 3, 10, Number(b.dataset.peso), 60, ui.musculo));
-      guardarFicha(alumna.id); mostrarAviso('Ejercicio agregado'); return;
+      const cambiado = ponerEjercicio(alumna, itemRutina(alumna.disciplina, v, 3, 10, Number(b.dataset.peso), 60, ui.musculo));
+      guardarFicha(alumna.id); mostrarAviso(cambiado ? 'Ejercicio cambiado' : 'Ejercicio agregado'); return;
     }
     case 'quitar':
       rutinaEditable(ui.alumnaId).splice(Number(v), 1);
@@ -781,6 +917,7 @@ app.addEventListener('click', ev => {
       const ej = rutinaEditable(ui.alumnaId)[Number(b.dataset.indice)];
       const campo = b.dataset.campo;
       ej[campo] = Math.max(MINIMOS[campo], ej[campo] + Number(b.dataset.delta) * PASOS[campo]);
+      marcarAutor(ej);
       guardarFicha(ui.alumnaId);
       break;
     }
@@ -797,9 +934,31 @@ app.addEventListener('change', ev => {
   if (cambio === 'test-resultado') {
     const test = datos.evaluaciones[ui.alumnaId].tests[Number(ev.target.dataset.indice)];
     test.resultado = Math.max(0, Number(ev.target.value) || 0);
-    guardarFicha(ui.alumnaId); mostrarAviso('Resultado guardado');
+    guardarFicha(ui.alumnaId, 'evaluacion'); mostrarAviso('Resultado guardado');
   }
 });
+
+// Marca si el ejercicio lo cambió el alumno (el profesor lo ve con una etiqueta)
+function marcarAutor(ej) {
+  if (perfil.rol === 'alumna') ej.porAlumno = true;
+  else delete ej.porAlumno;
+}
+
+// Agrega un ejercicio a la rutina que se está editando, o reemplaza al que se eligió "Cambiar".
+// Al reemplazar, conserva las series, repeticiones y pausa del anterior. Devuelve true si reemplazó.
+function ponerEjercicio(alumna, nuevo) {
+  const rutina = rutinaEditable(alumna.id);
+  const anterior = ui.reemplazando !== null ? rutina[ui.reemplazando] : null;
+  marcarAutor(nuevo);
+  if (anterior) {
+    Object.assign(nuevo, { series: anterior.series, reps: anterior.reps, pausa: anterior.pausa });
+    rutina[ui.reemplazando] = nuevo;
+    ui.reemplazando = null; ui.agregando = false;
+    return true;
+  }
+  rutina.push(nuevo);
+  return false;
+}
 
 // Devuelve la evaluación de la alumna elegida (la crea vacía si no existe)
 function evaluacionActual() {
@@ -832,7 +991,11 @@ app.addEventListener('submit', ev => {
     else {
       ui.ocupado = true; dibujar();
       servidor.cambiarClave(perfil.alumnaId, clave)
-        .then(() => { perfil.debeCambiarClave = false; mostrarAviso('Contraseña creada. ¡Bienvenida!'); })
+        .then(() => {
+          perfil.debeCambiarClave = false;
+          dejarDeEscuchar = servidor.escucharAvisos(perfil, lista => { avisos = lista; actualizarCampana(); });
+          mostrarAviso('Contraseña creada. ¡Te damos la bienvenida!');
+        })
         .catch(e => { ui.errorIngreso = mensajeError(e); })
         .finally(() => { ui.ocupado = false; dibujar(); });
       return;
@@ -855,6 +1018,9 @@ app.addEventListener('submit', ev => {
     ui.registrando = null;
     mostrarAviso('Registro guardado. Sumaste progreso');
     servidor.guardarRegistro(perfil.alumnaId, registro).catch(mostrarError);
+    servidor.avisarAlProfe(perfil.alumnaId,
+      `${perfil.nombre} registró ${ej.nombre} (${fechaLarga(fecha)}): ${registro.series} × ${registro.reps} con ${formatoPeso(registro.peso)}.`)
+      .catch(e => console.error(e));
   }
 
   if (f.dataset.form === 'encuesta') {
@@ -864,16 +1030,17 @@ app.addEventListener('submit', ev => {
     ui.estrellas = 0; ui.comentario = '';
     mostrarAviso('Gracias. Tu respuesta ya llegó');
     servidor.agregarEncuesta(respuesta).catch(mostrarError);
+    servidor.avisarAlProfe(perfil.alumnaId, `${perfil.nombre} respondió la encuesta: ${'★'.repeat(respuesta.puntaje)}.`).catch(e => console.error(e));
   }
 
   if (f.dataset.form === 'nueva-alumna') {
     const nombre = String(campos.get('nombre') || '').trim();
     const dni = String(campos.get('dni') || '').replace(/\D/g, '');
     if (!nombre || !dni) return;
-    if (datos.alumnas.some(a => a.dni === dni)) { ui.errorAlumna = 'Ya hay una alumna con ese DNI.'; dibujar(); return; }
+    if (datos.alumnas.some(a => a.dni === dni)) { ui.errorAlumna = 'Ya hay un alumno con ese DNI.'; dibujar(); return; }
     const disciplina = String(campos.get('disciplina'));
     ui.ocupado = true; ui.errorAlumna = ''; dibujar();
-    // Se crea con un código de primer ingreso; ella después crea su contraseña
+    // Se crea con un código de primer ingreso; el alumno después crea su contraseña
     servidor.crearAlumna({ nombre, dni, disciplina })
       .then(({ id, codigo }) => {
         datos.alumnas.push({ id, nombre, dni, disciplina, debeCambiarClave: true, codigoInicial: codigo });
@@ -883,7 +1050,7 @@ app.addEventListener('submit', ev => {
         // Abre su ficha, donde se ve el código para pasárselo
         ui.alumnaId = id; ui.seccionAlumna = 'rutina'; ui.dia = new Date().getDay();
         window.scrollTo(0, 0);
-        mostrarAviso('Alumna creada');
+        mostrarAviso('Alumno creado');
       })
       .catch(e => { ui.errorAlumna = mensajeError(e); })
       .finally(() => { ui.ocupado = false; dibujar(); });
@@ -897,13 +1064,14 @@ app.addEventListener('submit', ev => {
     const porMusculo = datos.ejerciciosPropios[alumna.disciplina] || (datos.ejerciciosPropios[alumna.disciplina] = {});
     const lista = porMusculo[ui.musculo] || (porMusculo[ui.musculo] = []);
     // Queda guardado en la lista para usarlo con cualquier alumna
-    if (!ejerciciosDe(alumna.disciplina, ui.musculo).some(e => e[0].toLowerCase() === nombre.toLowerCase())) {
+    // (solo el profesor la guarda en la lista compartida; el alumno lo suma a su rutina)
+    if (perfil.rol === 'profesor' && !ejerciciosDe(alumna.disciplina, ui.musculo).some(e => e[0].toLowerCase() === nombre.toLowerCase())) {
       lista.push({ nombre, peso });
       servidor.guardarEjerciciosPropios(datos.ejerciciosPropios).catch(mostrarError);
     }
-    rutinaEditable(alumna.id).push(itemRutina(alumna.disciplina, nombre, 3, 10, peso, 60, ui.musculo));
+    const cambiado = ponerEjercicio(alumna, itemRutina(alumna.disciplina, nombre, 3, 10, peso, 60, ui.musculo));
     ui.creando = false;
-    guardarFicha(alumna.id); mostrarAviso('Ejercicio creado y agregado');
+    guardarFicha(alumna.id); mostrarAviso(cambiado ? 'Ejercicio creado y cambiado' : 'Ejercicio creado y agregado');
   }
 
   if (f.dataset.form === 'evaluacion') {
@@ -915,7 +1083,7 @@ app.addEventListener('submit', ev => {
     ev.altura = Number(campos.get('altura')) || null;
     ev.antecedentes = String(campos.get('antecedentes') || '').trim();
     ev.observaciones = String(campos.get('observaciones') || '').trim();
-    guardarFicha(ui.alumnaId); mostrarAviso('Evaluación guardada');
+    guardarFicha(ui.alumnaId, 'evaluacion'); mostrarAviso('Evaluación guardada');
   }
 
   if (f.dataset.form === 'nuevo-test') {
@@ -928,20 +1096,20 @@ app.addEventListener('submit', ev => {
       resultado: num('resultado', 0), nota: String(campos.get('nota') || '').trim()
     });
     ui.agregandoTest = false;
-    guardarFicha(ui.alumnaId); mostrarAviso('Test agregado');
+    guardarFicha(ui.alumnaId, 'evaluacion'); mostrarAviso('Test agregado');
   }
 
   if (f.dataset.form === 'nota') {
     const nota = String(campos.get('nota') || '').trim().slice(0, 400);
     if (nota) datos.notasProgreso[ui.alumnaId] = nota;
     else delete datos.notasProgreso[ui.alumnaId];
-    guardarFicha(ui.alumnaId); mostrarAviso('Mensaje guardado');
+    guardarFicha(ui.alumnaId, 'nota'); mostrarAviso('Mensaje guardado');
   }
 });
 
 // Carga en el servidor las alumnas de ejemplo (cada una con su código de primer ingreso)
 async function cargarEjemplo() {
-  if (!confirm('¿Cargar 3 alumnas de ejemplo (datos inventados) en el servidor?')) return;
+  if (!confirm('¿Cargar 3 alumnos de ejemplo (datos inventados) en el servidor?')) return;
   ui.ocupado = true; dibujar();
   try {
     for (const ejemplo of alumnasDeEjemplo()) {
@@ -956,13 +1124,15 @@ async function cargarEjemplo() {
       if (extra.evaluacion) datos.evaluaciones[id] = extra.evaluacion;
     }
     datos.alumnas.sort((a, b) => a.nombre.localeCompare(b.nombre));
-    mostrarAviso('Alumnas de ejemplo cargadas');
+    mostrarAviso('Alumnos de ejemplo cargados');
   } catch (e) { mostrarError(e); }
   ui.ocupado = false; dibujar();
 }
 
 // Cada vez que alguien entra o sale, se traen sus datos y se dibuja la pantalla que le toca
 servidor.alCambiarSesion(async usuario => {
+  if (dejarDeEscuchar) { dejarDeEscuchar(); dejarDeEscuchar = null; }
+  avisos = []; ui.verAvisos = false; ui.editando = false; ui.eligiendoAlcance = false;
   if (!usuario) { perfil = null; cargando = false; dibujar(); return; }
   cargando = true; dibujar();
   try {
@@ -971,6 +1141,8 @@ servidor.alCambiarSesion(async usuario => {
     perfil = resultado.perfil;
     ui.pestana = PESTANAS[perfil.rol][0][0];
     ui.alumnaId = null; ui.dia = new Date().getDay(); ui.fecha = fechaISO(); ui.estrellas = 0; ui.comentario = ''; ui.errorIngreso = '';
+    // La campanita se actualiza sola mientras la app está abierta
+    if (!perfil.debeCambiarClave) dejarDeEscuchar = servidor.escucharAvisos(perfil, lista => { avisos = lista; actualizarCampana(); });
   } catch (e) {
     ui.errorIngreso = mensajeError(e);
     perfil = null;

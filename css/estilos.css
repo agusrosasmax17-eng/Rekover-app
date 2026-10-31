@@ -442,3 +442,32 @@ input[type="date"] { color-scheme: dark; } /* calendario e ícono en colores osc
   border-radius: 8px;
   font-size: 14px;
 }
+
+/* ---------- Campanita de notificaciones ---------- */
+.encabezado-nombre { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.campana {
+  position: relative;
+  width: 40px; height: 40px;
+  display: grid; place-items: center;
+  border: 0; border-radius: 50%;
+  background: transparent;
+  color: var(--azul);
+}
+.campana.activa { background: var(--secundario); }
+.campana-numero:empty { display: none; }
+.campana-numero {
+  position: absolute; top: 2px; right: 0;
+  min-width: 18px; height: 18px; padding: 0 4px;
+  border-radius: 999px;
+  background: var(--oro); color: var(--navy);
+  font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
+}
+.aviso-item { width: 100%; text-align: left; }
+.aviso-item p { margin: 0 0 4px; }
+.aviso-item small { color: var(--texto-suave); }
+.aviso-item.nuevo { border-left: 3px solid var(--oro); }
+
+/* ---------- El alumno cambia su rutina ---------- */
+.alcance { display: grid; gap: 10px; margin-top: 10px; }
+.acciones-ejercicio { display: flex; align-items: center; gap: 4px; flex: none; }
+.aviso-especial .boton { min-height: 40px; padding: 8px 18px; }
