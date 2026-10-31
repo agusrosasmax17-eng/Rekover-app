@@ -6,7 +6,10 @@ La dueña del proyecto **no sabe programar**: explicar siempre todo en **españo
 ## Reglas técnicas
 
 - Solo **HTML, CSS y JavaScript**, sin herramientas de compilación (nada de npm, bundlers, frameworks que haya que compilar).
-- `index.html` va en la **raíz** del repositorio. Se publica con **GitHub Pages desde la rama `main`**.
+- `index.html` va en la **raíz** del repositorio. Todo lo que se une a la rama **`main`** se publica solo:
+  - **Dirección principal: https://rekover-app.pages.dev** (Cloudflare Pages, gratis, conectado al repositorio; sin comando de compilación, directorio de salida `/`).
+  - También sigue activa la de GitHub Pages: https://agusrosasmax17-eng.github.io/Rekover-app/
+  - Cloudflare publica además una **vista previa** de cada rama de trabajo (se ve en Cloudflare → proyecto rekover-app → Implementaciones). Sirve para que la dueña pruebe los cambios antes de unirlos a `main`.
 - Diseño **primero para celular** (mobile first).
 - Los datos se guardan en **Firebase** (plan gratis Spark): ingreso con **Firebase Authentication** (correo y contraseña) y datos en **Cloud Firestore** (São Paulo). La librería se carga desde `https://www.gstatic.com/firebasejs/10.14.1/` (sin instalar nada).
 - Por ahora solo **datos de ejemplo inventados**. **Nada de datos reales** hasta tener el consentimiento de las personas y la consulta legal (Ley 25.326: los datos de salud son sensibles).
