@@ -75,7 +75,7 @@ function itemRutina(disciplina, nombre, series, reps, peso, pausa, musculo) {
   return { nombre, musculo: musculo || musculoDe(disciplina, nombre), series, reps, peso, pausa };
 }
 
-// Alumnas de ejemplo que el profesor puede cargar en el servidor para probar.
+// Alumnos de ejemplo que el profesor puede cargar en el servidor para probar.
 // Cada una se crea con su código de primer ingreso, como una alumna real.
 function alumnasDeEjemplo() {
   const M = 'Musculación', F = 'Funcional';
@@ -139,7 +139,7 @@ function alumnasDeEjemplo() {
       }
     },
     {
-      nombre: 'Lucía Fernández', dni: '32444555', disciplina: M,
+      nombre: 'Tomás Fernández', dni: '32444555', disciplina: M,
       rutinas: {
         1: [itemRutina(M, 'Prensa de piernas', 4, 12, 90, 90), itemRutina(M, 'Extensión de cuádriceps', 3, 12, 25, 60)],
         4: [itemRutina(M, 'Press de banca', 4, 10, 25, 90), itemRutina(M, 'Jalón al pecho', 4, 10, 30, 90)]
