@@ -425,3 +425,20 @@ textarea { resize: vertical; }
 .codigo-ingreso small { color: var(--texto-suave); }
 .codigo-ingreso b { display: block; font-family: var(--titulos); font-size: 32px; letter-spacing: 0.15em; color: var(--oro); margin: 4px 0; }
 .codigo-ingreso p { margin: 0; font-size: 14px; color: var(--texto-suave); }
+
+/* ---------- Calendario para elegir la fecha ---------- */
+.selector-fecha { margin-bottom: 14px; }
+.selector-fecha .campo { margin-bottom: 8px; }
+.selector-fecha .fila-botones { gap: 8px; }
+.selector-fecha .fila-botones .chip { flex: none; }
+input[type="date"] { color-scheme: dark; } /* calendario e ícono en colores oscuros */
+
+/* Aviso de rutina especial de una fecha puntual */
+.aviso-especial {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--oro);
+  background: rgba(240, 165, 0, 0.12);
+  border-radius: 8px;
+  font-size: 14px;
+}

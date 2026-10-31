@@ -72,7 +72,8 @@ Rekover es **Sports Recovery**. El PDF del manual es confidencial: no subirlo al
   - Si no hay alumnas, el profesor puede cargar 3 alumnas de ejemplo con un botón.
   - Evaluación inicial por alumna (datos, objetivo, nivel, antecedentes, observaciones y tests/ejercicios con resultado; el profesor puede crear tests propios). La alumna la ve en Progreso, sin poder cambiarla.
   - Gimnasio para Musculación y Funcional. El profesor puede repetir ejercicios y crear ejercicios propios.
-  - La alumna registra series, repeticiones, peso y pausa.
+  - La alumna registra series, repeticiones, peso y pausa. Elige la fecha con un calendario: puede anotar hoy o cualquier día anterior (los días futuros solo se pueden mirar).
+  - Rutina semanal: lo que el profesor arma para un día de la semana se repite todas las semanas. Además puede cambiar una fecha puntual ("Modificar solo esta fecha") sin tocar las demás semanas, y volver a la semanal cuando quiera.
   - Progreso solo en kg: mejor peso, máx. repeticiones, aumento desde el inicio, explicación en palabras y mensaje del profesor.
   - Encuesta del gimnasio.
 - Pilates: "Próximamente".
@@ -87,7 +88,7 @@ Rekover es **Sports Recovery**. El PDF del manual es confidencial: no subirlo al
 ## Cómo están guardados los datos (Firestore)
 
 - `accesos/{dni}` → qué cuenta usa cada DNI.
-- `alumnas/{id}` → nombre, DNI, disciplina, cuenta (`uid`), código de primer ingreso, rutinas, evaluación inicial y mensaje del profe.
+- `alumnas/{id}` → nombre, DNI, disciplina, cuenta (`uid`), código de primer ingreso, `rutinas` (semanal: clave 0–6 = domingo–sábado), `cambios` (rutinas especiales por fecha `AAAA-MM-DD`), evaluación inicial y mensaje del profe.
 - `alumnas/{id}/registros/{fecha_ejercicio}` → lo que registró la alumna.
 - `encuestas/{id}` → respuestas de la encuesta.
 - `config/ejercicios` → ejercicios propios del profesor.

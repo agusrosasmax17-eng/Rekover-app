@@ -4,7 +4,8 @@
 
    Cómo están guardados los datos:
    - accesos/{dni}            → qué cuenta usa cada DNI para ingresar
-   - alumnas/{id}             → datos de la alumna, rutinas, evaluación y mensaje del profe
+   - alumnas/{id}             → datos de la alumna, rutina semanal, cambios por fecha,
+                                evaluación y mensaje del profe
    - alumnas/{id}/registros   → lo que la alumna registró cada día
    - encuestas/{id}           → respuestas de la encuesta de satisfacción
    - config/ejercicios        → ejercicios propios que creó el profesor
@@ -56,11 +57,12 @@ export function salir() { return signOut(auth); }
 
 // Trae del servidor lo que le corresponde ver a la persona que ingresó
 export async function cargar(usuario) {
-  const datos = { alumnas: [], rutinas: {}, registros: [], encuestas: [], notasProgreso: {}, ejerciciosPropios: {}, evaluaciones: {} };
+  const datos = { alumnas: [], rutinas: {}, cambios: {}, registros: [], encuestas: [], notasProgreso: {}, ejerciciosPropios: {}, evaluaciones: {} };
   const sumarAlumna = d => {
     const a = d.data();
     datos.alumnas.push({ id: d.id, nombre: a.nombre, dni: a.dni, disciplina: a.disciplina, debeCambiarClave: !!a.debeCambiarClave, codigoInicial: a.codigoInicial || '' });
     datos.rutinas[d.id] = a.rutinas || {};
+    datos.cambios[d.id] = a.cambios || {};
     if (a.notaProgreso) datos.notasProgreso[d.id] = a.notaProgreso;
     if (a.evaluacion) datos.evaluaciones[d.id] = a.evaluacion;
   };

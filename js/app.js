@@ -8,7 +8,7 @@
 import * as servidor from './servidor.js';
 
 // Copia en memoria de lo que esta persona puede ver (se trae del servidor al ingresar)
-let datos = { alumnas: [], rutinas: {}, registros: [], encuestas: [], notasProgreso: {}, ejerciciosPropios: {}, evaluaciones: {} };
+let datos = { alumnas: [], rutinas: {}, cambios: {}, registros: [], encuestas: [], notasProgreso: {}, ejerciciosPropios: {}, evaluaciones: {} };
 let perfil = null;
 let cargando = true; // mientras se conecta con el servidor
 
@@ -23,7 +23,10 @@ const ui = {
   testElegido: TESTS[0][0], // test elegido en ese formulario ('otro' = crear uno propio)
   filtro: 'Todas',          // filtro de disciplina en la lista de alumnas
   alumnaId: null,           // alumna elegida por el profesor
-  dia: new Date().getDay(), // día de la rutina que se está viendo
+  dia: new Date().getDay(), // día de la semana que edita el profesor en la rutina semanal
+  modoRutina: 'semanal',    // el profesor edita la rutina 'semanal' o la de una 'fecha' puntual
+  fechaRutina: fechaISO(),  // fecha puntual que está editando el profesor
+  fecha: fechaISO(),        // fecha que está viendo/registrando la alumna
   agregando: false,         // si está abierta la lista para agregar ejercicios
   creando: false,           // si está abierto el formulario de ejercicio propio
   musculo: null,            // músculo elegido en esa lista
@@ -52,6 +55,7 @@ function guardarFicha(alumnaId) {
     delete guardadosPendientes[alumnaId];
     servidor.guardarFicha(alumnaId, {
       rutinas: datos.rutinas[alumnaId] || {},
+      cambios: datos.cambios[alumnaId] || {},
       notaProgreso: datos.notasProgreso[alumnaId] || '',
       evaluacion: datos.evaluaciones[alumnaId] || null
     }).catch(mostrarError);
@@ -105,6 +109,27 @@ function rutinaDe(alumnaId, dia) {
   return r[dia] || (r[dia] = []);
 }
 
+// Día de la semana (0 = domingo) de una fecha AAAA-MM-DD
+function diaDeSemana(fecha) { return new Date(fecha + 'T12:00').getDay(); }
+
+// "viernes 30/10"
+function fechaLarga(fecha) { return `${DIAS[diaDeSemana(fecha)].toLowerCase()} ${formatoFecha(fecha)}`; }
+
+// Cambios puntuales de una alumna: { 'AAAA-MM-DD': [ejercicios] }
+function cambiosDe(alumnaId) { return datos.cambios[alumnaId] || (datos.cambios[alumnaId] = {}); }
+
+// Rutina que corresponde a una fecha: la especial de esa fecha si existe,
+// y si no, la semanal de ese día de la semana
+function rutinaDeFecha(alumnaId, fecha) {
+  return cambiosDe(alumnaId)[fecha] || rutinaDe(alumnaId, diaDeSemana(fecha));
+}
+
+// Rutina que está editando el profesor en este momento (semanal o de una fecha puntual)
+function rutinaEditable(alumnaId) {
+  if (ui.modoRutina === 'fecha') return cambiosDe(alumnaId)[ui.fechaRutina] || [];
+  return rutinaDe(alumnaId, ui.dia);
+}
+
 // Ejercicios de un músculo: los de la lista base más los que creó el profesor
 function ejerciciosDe(disciplina, musculo) {
   const propios = datos.ejerciciosPropios[disciplina]?.[musculo] || [];
@@ -142,7 +167,7 @@ function encabezado() {
 
 // Pestañas de abajo: cada perfil ve solo las suyas
 const PESTANAS = {
-  alumna:   [['hoy', 'Hoy'], ['progreso', 'Progreso'], ['encuesta', 'Encuesta']],
+  alumna:   [['hoy', 'Rutina'], ['progreso', 'Progreso'], ['encuesta', 'Encuesta']],
   profesor: [['alumnas', 'Alumnas'], ['encuestas', 'Encuestas'], ['kinesio', 'Kinesio']],
   paciente: [['turnos', 'Turnos']]
 };
@@ -197,7 +222,24 @@ function pantallaCrearClave() {
   </section>`;
 }
 
-/* ---------- Selector de días (compartido) ---------- */
+/* ---------- Selector de fecha con calendario (compartido) ---------- */
+
+// Calendario + botones rápidos. La alumna mira hacia atrás ("Ayer");
+// el profesor programa hacia adelante ("Mañana").
+function selectorFecha(cambio, fecha, etiqueta, haciaAdelante = false) {
+  const rapidos = [['Hoy', 0], haciaAdelante ? ['Mañana', 1] : ['Ayer', -1]].map(([texto, dias]) => {
+    const valor = fechaISO(new Date(Date.now() + dias * 864e5));
+    return `<button class="chip ${fecha === valor ? 'activa' : ''}" data-accion="${cambio}" data-valor="${valor}">${texto}</button>`;
+  }).join('');
+  return `<div class="selector-fecha">
+    <label class="campo">${etiqueta}
+      <input type="date" value="${fecha}" data-cambio="${cambio}">
+    </label>
+    <div class="fila-botones">${rapidos}</div>
+  </div>`;
+}
+
+/* ---------- Selector de días de la semana (rutina semanal) ---------- */
 
 function selectorDias(alumnaId) {
   const hoy = new Date().getDay();
@@ -220,18 +262,22 @@ function pantallaAlumna() {
 
 function alumnaHoy() {
   const alumna = alumnaPorId(perfil.alumnaId);
-  const rutina = rutinaDe(alumna.id, ui.dia);
+  const fecha = ui.fecha;
+  const rutina = rutinaDeFecha(alumna.id, fecha);
   const hoy = fechaISO();
-  const esHoy = ui.dia === new Date().getDay();
+  const esHoy = fecha === hoy;
+  const esFutura = fecha > hoy;
+  const especial = !!cambiosDe(alumna.id)[fecha];
+  const sePuedeRegistrar = !esFutura;
 
   const tarjetas = rutina.map((ej, i) => {
-    const hecho = datos.registros.find(r => r.alumnaId === alumna.id && r.nombre === ej.nombre && r.fecha === hoy);
+    const hecho = datos.registros.find(r => r.alumnaId === alumna.id && r.nombre === ej.nombre && r.fecha === fecha);
     const abierto = ui.registrando === i;
     const base = hecho || ej; // si ya registró, se muestra lo que hizo
-    return `<article class="tarjeta ejercicio ${hecho && esHoy ? 'hecho' : ''}">
+    return `<article class="tarjeta ejercicio ${hecho ? 'hecho' : ''}">
       <div class="ejercicio-titulo">
         <div><small class="musculo">${esc(ej.musculo)}</small><h3>${esc(ej.nombre)}</h3></div>
-        ${hecho && esHoy ? '<span class="check">✓</span>' : ''}
+        ${hecho ? '<span class="check">✓</span>' : ''}
       </div>
       <div class="datos-ejercicio">
         <div><b>${ej.series}</b><small>series</small></div>
@@ -239,9 +285,9 @@ function alumnaHoy() {
         <div><b>${formatoPeso(ej.peso)}</b><small>peso</small></div>
         <div><b>${formatoPausa(ej.pausa)}</b><small>pausa</small></div>
       </div>
-      ${!esHoy ? '' : abierto ? `
+      ${!sePuedeRegistrar ? '' : abierto ? `
         <form class="registro" data-form="registro" data-indice="${i}">
-          <p class="registro-titulo">¿Qué hiciste hoy?</p>
+          <p class="registro-titulo">¿Qué hiciste ${esHoy ? 'hoy' : 'el ' + fechaLarga(fecha)}?</p>
           <div class="grilla-2">
             <label>Series<input type="number" name="series" step="1" min="1" inputmode="numeric" value="${base.series}"></label>
             <label>Repeticiones<input type="number" name="reps" step="1" min="0" inputmode="numeric" value="${base.reps}"></label>
@@ -262,11 +308,12 @@ function alumnaHoy() {
     </article>`;
   }).join('');
 
-  return `<h1>${esHoy ? 'Mi rutina de hoy' : 'Rutina del ' + DIAS[ui.dia].toLowerCase()}</h1>
-    <p class="suave">${esc(alumna.disciplina)} · ${DIAS[ui.dia]}</p>
-    ${selectorDias(alumna.id)}
+  return `<h1>${esHoy ? 'Mi rutina de hoy' : 'Rutina del ' + fechaLarga(fecha)}</h1>
+    <p class="suave">${esc(alumna.disciplina)}</p>
+    ${selectorFecha('fecha-alumna', fecha, 'Elegí el día que querés ver o anotar')}
+    ${especial ? '<p class="aviso-especial">Rutina especial para este día, armada por tu profe.</p>' : ''}
     ${rutina.length ? tarjetas : `<div class="tarjeta vacio">${esHoy ? 'Hoy no tenés rutina: día de recuperación. Mañana seguimos.' : 'No hay rutina para este día.'}</div>`}
-    ${!esHoy && rutina.length ? '<p class="suave centro">Podés registrar lo que hiciste solo en la rutina de hoy.</p>' : ''}`;
+    ${esFutura && rutina.length ? '<p class="suave centro">Este día todavía no llegó: vas a poder anotar lo que hiciste cuando llegue.</p>' : ''}`;
 }
 
 function alumnaProgreso() {
@@ -467,7 +514,33 @@ function profesorFichaAlumna() {
 }
 
 function profesorRutina(alumna) {
-  const rutina = rutinaDe(alumna.id, ui.dia);
+  const modos = [['semanal', 'Rutina semanal'], ['fecha', 'Cambiar una fecha']];
+  const elegirModo = `<div class="chips">${modos.map(([id, texto]) =>
+    `<button class="chip ${ui.modoRutina === id ? 'activa' : ''}" data-accion="modo-rutina" data-valor="${id}">${texto}</button>`).join('')}</div>`;
+
+  let encabezado;
+  if (ui.modoRutina === 'semanal') {
+    encabezado = `<p class="suave">Lo que armes se repite todas las semanas.</p>
+      ${selectorDias(alumna.id)}
+      <h2>Todos los ${DIAS[ui.dia].toLowerCase()}${ui.dia === 6 || ui.dia === 0 ? 's' : ''}</h2>`;
+  } else {
+    const fecha = ui.fechaRutina;
+    const especial = cambiosDe(alumna.id)[fecha];
+    encabezado = `<p class="suave">Cambiá la rutina de un solo día sin tocar las demás semanas.</p>
+      ${selectorFecha('fecha-rutina', fecha, 'Fecha a cambiar', true)}
+      <h2>${fechaLarga(fecha)}</h2>`;
+    if (!especial) {
+      const semanal = rutinaDe(alumna.id, diaDeSemana(fecha));
+      return elegirModo + encabezado + `
+        <div class="tarjeta vacio">
+          <p>Este día usa la rutina semanal de los ${DIAS[diaDeSemana(fecha)].toLowerCase()} (${semanal.length} ${semanal.length === 1 ? 'ejercicio' : 'ejercicios'}).</p>
+          <button class="boton" data-accion="personalizar-fecha">Modificar solo esta fecha</button>
+        </div>` + notaProgreso(alumna);
+    }
+    encabezado += `<div class="aviso-especial fila-separada"><span>Rutina especial solo para este día.</span>
+      <button class="boton-texto" data-accion="quitar-cambios">Volver a la semanal</button></div>`;
+  }
+  const rutina = rutinaEditable(alumna.id);
 
   const items = rutina.map((ej, i) => `
     <article class="tarjeta ejercicio">
@@ -483,12 +556,15 @@ function profesorRutina(alumna) {
       </div>
     </article>`).join('');
 
-  return `<p class="suave">Elegí el día y armá la rutina.</p>
-    ${selectorDias(alumna.id)}
-    <h2>${DIAS[ui.dia]}</h2>
+  return elegirModo + encabezado + `
     ${items || '<div class="tarjeta vacio">Este día no tiene ejercicios todavía.</div>'}
     ${ui.agregando ? selectorEjercicios(alumna) : '<button class="boton ancho" data-accion="abrir-agregar">+ Agregar ejercicio</button>'}
-    <h2>Mensaje de progreso</h2>
+    ${notaProgreso(alumna)}`;
+}
+
+// Mensaje que el profesor le deja a la alumna en su pantalla de Progreso
+function notaProgreso(alumna) {
+  return `<h2>Mensaje de progreso</h2>
     <form class="tarjeta" data-form="nota">
       <label class="campo">Lo ve ${esc(alumna.nombre.split(' ')[0])} al final de su pantalla de Progreso
         <textarea name="nota" rows="3" maxlength="400" placeholder="Ej.: Subiste 10 kg en sentadilla en 6 semanas. Próximo objetivo: 50 kg.">${esc(datos.notasProgreso[alumna.id] || '')}</textarea>
@@ -572,7 +648,7 @@ const MINIMOS = { series: 1, reps: 1, peso: 0, pausa: 0 };
 function selectorEjercicios(alumna) {
   const musculos = Object.keys(CATALOGO[alumna.disciplina]);
   if (!musculos.includes(ui.musculo)) ui.musculo = musculos[0];
-  const yaEstan = rutinaDe(alumna.id, ui.dia).map(e => e.nombre);
+  const yaEstan = rutinaEditable(alumna.id).map(e => e.nombre);
   return `<div class="tarjeta selector">
     <div class="fila-separada"><h3>Agregar ejercicio</h3>
       <button class="boton-icono" data-accion="cerrar-agregar" aria-label="Cerrar">✕</button></div>
@@ -638,11 +714,24 @@ app.addEventListener('click', ev => {
     case 'cargar-ejemplo': cargarEjemplo(); return;
     case 'pestana':
       ui.pestana = v; ui.alumnaId = null; ui.agregando = false; ui.creando = false; ui.registrando = null;
-      ui.dia = new Date().getDay(); ui.estrellas = 0; ui.comentario = '';
+      ui.dia = new Date().getDay(); ui.fecha = fechaISO(); ui.estrellas = 0; ui.comentario = '';
       break;
     case 'dia':
       ui.dia = Number(v); ui.registrando = null;
       break;
+    case 'fecha-alumna': ui.fecha = v; ui.registrando = null; break;
+    case 'fecha-rutina': ui.fechaRutina = v; ui.agregando = false; break;
+    case 'modo-rutina': ui.modoRutina = v; ui.agregando = false; ui.creando = false; break;
+    case 'personalizar-fecha': {
+      // Copia la rutina semanal de ese día como punto de partida
+      const semanal = rutinaDe(ui.alumnaId, diaDeSemana(ui.fechaRutina));
+      cambiosDe(ui.alumnaId)[ui.fechaRutina] = JSON.parse(JSON.stringify(semanal));
+      guardarFicha(ui.alumnaId); mostrarAviso('Ahora podés cambiar solo esta fecha'); return;
+    }
+    case 'quitar-cambios':
+      if (!confirm(`¿Borrar los cambios del ${fechaLarga(ui.fechaRutina)} y volver a la rutina semanal?`)) return;
+      delete cambiosDe(ui.alumnaId)[ui.fechaRutina];
+      guardarFicha(ui.alumnaId); mostrarAviso('Volvió a la rutina semanal'); return;
     // Alumna
     case 'registrar': ui.registrando = Number(v); break;
     case 'cancelar-registro': ui.registrando = null; break;
@@ -652,7 +741,7 @@ app.addEventListener('click', ev => {
     case 'elegir-alumna':
       ui.alumnaId = v; ui.agregando = false; ui.creando = false;
       ui.seccionAlumna = 'rutina'; ui.agregandoTest = false;
-      ui.dia = new Date().getDay();
+      ui.dia = new Date().getDay(); ui.modoRutina = 'semanal'; ui.fechaRutina = fechaISO();
       break;
     case 'volver': ui.alumnaId = null; ui.agregando = false; ui.creando = false; break;
     case 'seccion-alumna': ui.seccionAlumna = v; ui.agregandoTest = false; break;
@@ -681,15 +770,15 @@ app.addEventListener('click', ev => {
     case 'musculo': ui.musculo = v; ui.creando = false; break;
     case 'agregar': {
       const alumna = alumnaPorId(ui.alumnaId);
-      rutinaDe(alumna.id, ui.dia).push(itemRutina(alumna.disciplina, v, 3, 10, Number(b.dataset.peso), 60, ui.musculo));
+      rutinaEditable(alumna.id).push(itemRutina(alumna.disciplina, v, 3, 10, Number(b.dataset.peso), 60, ui.musculo));
       guardarFicha(alumna.id); mostrarAviso('Ejercicio agregado'); return;
     }
     case 'quitar':
-      rutinaDe(ui.alumnaId, ui.dia).splice(Number(v), 1);
+      rutinaEditable(ui.alumnaId).splice(Number(v), 1);
       guardarFicha(ui.alumnaId);
       break;
     case 'paso': {
-      const ej = rutinaDe(ui.alumnaId, ui.dia)[Number(b.dataset.indice)];
+      const ej = rutinaEditable(ui.alumnaId)[Number(b.dataset.indice)];
       const campo = b.dataset.campo;
       ej[campo] = Math.max(MINIMOS[campo], ej[campo] + Number(b.dataset.delta) * PASOS[campo]);
       guardarFicha(ui.alumnaId);
@@ -702,6 +791,8 @@ app.addEventListener('click', ev => {
 app.addEventListener('change', ev => {
   const cambio = ev.target.dataset.cambio;
   if (cambio === 'ejercicio-grafico') { ui.ejercicioGrafico = ev.target.value; dibujar(); }
+  if (cambio === 'fecha-alumna' && ev.target.value) { ui.fecha = ev.target.value; ui.registrando = null; dibujar(); }
+  if (cambio === 'fecha-rutina' && ev.target.value) { ui.fechaRutina = ev.target.value; ui.agregando = false; dibujar(); }
   if (cambio === 'tipo-test') { ui.testElegido = ev.target.value; dibujar(); }
   if (cambio === 'test-resultado') {
     const test = datos.evaluaciones[ui.alumnaId].tests[Number(ev.target.dataset.indice)];
@@ -750,15 +841,16 @@ app.addEventListener('submit', ev => {
   }
 
   if (f.dataset.form === 'registro') {
-    const ej = rutinaDe(perfil.alumnaId, ui.dia)[Number(f.dataset.indice)];
-    const hoy = fechaISO();
+    const fecha = ui.fecha;
+    if (fecha > fechaISO()) return; // no se registran días que todavía no llegaron
+    const ej = rutinaDeFecha(perfil.alumnaId, fecha)[Number(f.dataset.indice)];
     const registro = {
-      alumnaId: perfil.alumnaId, nombre: ej.nombre, fecha: hoy,
+      alumnaId: perfil.alumnaId, nombre: ej.nombre, fecha,
       series: Math.round(num('series', 1)), reps: Math.round(num('reps', 0)),
       peso: num('peso', 0), pausa: Math.round(num('pausa', 0))
     };
-    // Si ya había un registro de hoy para ese ejercicio, se reemplaza
-    datos.registros = datos.registros.filter(r => !(r.alumnaId === perfil.alumnaId && r.nombre === ej.nombre && r.fecha === hoy));
+    // Si ya había un registro de esa fecha para ese ejercicio, se reemplaza
+    datos.registros = datos.registros.filter(r => !(r.alumnaId === perfil.alumnaId && r.nombre === ej.nombre && r.fecha === fecha));
     datos.registros.push(registro);
     ui.registrando = null;
     mostrarAviso('Registro guardado. Sumaste progreso');
@@ -809,7 +901,7 @@ app.addEventListener('submit', ev => {
       lista.push({ nombre, peso });
       servidor.guardarEjerciciosPropios(datos.ejerciciosPropios).catch(mostrarError);
     }
-    rutinaDe(alumna.id, ui.dia).push(itemRutina(alumna.disciplina, nombre, 3, 10, peso, 60, ui.musculo));
+    rutinaEditable(alumna.id).push(itemRutina(alumna.disciplina, nombre, 3, 10, peso, 60, ui.musculo));
     ui.creando = false;
     guardarFicha(alumna.id); mostrarAviso('Ejercicio creado y agregado');
   }
@@ -878,7 +970,7 @@ servidor.alCambiarSesion(async usuario => {
     datos = resultado.datos;
     perfil = resultado.perfil;
     ui.pestana = PESTANAS[perfil.rol][0][0];
-    ui.alumnaId = null; ui.dia = new Date().getDay(); ui.estrellas = 0; ui.comentario = ''; ui.errorIngreso = '';
+    ui.alumnaId = null; ui.dia = new Date().getDay(); ui.fecha = fechaISO(); ui.estrellas = 0; ui.comentario = ''; ui.errorIngreso = '';
   } catch (e) {
     ui.errorIngreso = mensajeError(e);
     perfil = null;
