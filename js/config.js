@@ -14,8 +14,8 @@ export const firebaseConfig = {
   appId: '1:550098884706:web:5e0fb25a60db1fd720193b'
 };
 
-// Cuenta del profesor (se crea a mano en Firebase → Authentication → Users).
-// En la app se ingresa escribiendo "profesor" como usuario.
+// Cuenta de la administradora (se creó a mano en Firebase → Authentication → Users).
+// En la app se ingresa escribiendo "profesor" como usuario. Ve todo y crea a los entrenadores.
 // Si se cambia este correo, hay que cambiarlo también en firestore.rules.
 export const PROFESOR_EMAIL = 'profesor@rekover.app';
 export const NOMBRE_PROFESOR = 'Profesor';
@@ -23,3 +23,6 @@ export const NOMBRE_PROFESOR = 'Profesor';
 // Las alumnas entran con su DNI. Por dentro, Firebase les asigna un correo
 // inventado con este final (nunca se le manda nada a ese correo).
 export const DOMINIO_ALUMNAS = 'alumnas.rekover.app';
+
+// Lo mismo para los entrenadores (ingresan con su DNI eligiendo "Soy entrenador")
+export const DOMINIO_ENTRENADORES = 'entrenadores.rekover.app';

@@ -6,6 +6,7 @@
    ========================================================= */
 
 import * as servidor from './servidor.js';
+import { leerPlanilla } from './excel.js';
 
 // Copia en memoria de lo que esta persona puede ver (se trae del servidor al ingresar)
 let datos = { alumnas: [], rutinas: {}, cambios: {}, registros: [], encuestas: [], notasProgreso: {}, ejerciciosPropios: {}, evaluaciones: {} };
@@ -38,6 +39,11 @@ const ui = {
   eligiendoAlcance: false,  // el alumno elige si cambia solo ese día o todas las semanas
   reemplazando: null,       // índice del ejercicio que se está cambiando por otro
   verAvisos: false,         // está abierta la lista de notificaciones
+  importacion: null,        // planilla de Excel leída, esperando que el profesor la confirme
+  tipoIngreso: 'alumno',    // en la pantalla de ingreso: 'alumno' o 'entrenador'
+  entrenadorId: null,       // entrenador elegido por la administradora
+  nuevoEntrenador: false,   // formulario de entrenador nuevo abierto
+  errorEntrenador: '',      // mensaje si no se pudo crear un entrenador
   ejercicioGrafico: null,   // ejercicio elegido en Progreso
   estrellas: 0,             // puntaje elegido en la encuesta
   comentario: ''            // comentario que se está escribiendo en la encuesta
@@ -83,6 +89,7 @@ function textoDeAviso(tipo) {
   if (perfil.rol === 'profesor') {
     if (tipo === 'evaluacion') return 'Tu profe actualizó tu evaluación inicial.';
     if (tipo === 'nota') return 'Tu profe te dejó un mensaje sobre tu progreso.';
+    if (tipo === 'importacion') return 'Tu profe cargó tu rutina nueva. ¡A entrenar!';
     return `Tu profe actualizó tu ${cual}.`;
   }
   return `${perfil.nombre} cambió su ${cual}.`;
@@ -97,7 +104,7 @@ function enviarAviso(alumnaId, texto) {
   const clave = alumnaId + texto;
   if (Date.now() - (ultimosAvisos[clave] || 0) < 10 * 60e3) return;
   ultimosAvisos[clave] = Date.now();
-  const envio = perfil.rol === 'profesor' ? servidor.avisarAlAlumno(alumnaId, texto) : servidor.avisarAlProfe(alumnaId, texto);
+  const envio = perfil.rol === 'profesor' ? servidor.avisarAlAlumno(alumnaId, texto) : servidor.avisarAlProfe(alumnaId, texto, perfil.entrenadorUid);
   envio.catch(e => console.error(e));
 }
 
@@ -110,8 +117,12 @@ function mensajeError(e) {
   if (codigo === 'auth/network-request-failed' || codigo === 'unavailable') return 'No hay conexión a internet. Revisala e intentá de nuevo.';
   if (codigo === 'rekover/sin-ficha') return 'Tu cuenta no tiene una ficha asignada. Consultá con tu profe.';
   if (codigo === 'rekover/dni-repetido') return 'Ya hay un alumno con ese DNI.';
+  if (codigo === 'rekover/dni-repetido-entrenador') return 'Ya hay un entrenador con ese DNI.';
+  if (codigo === 'rekover/sin-ficha') return 'No encontramos tu ficha. Fijate de haber elegido bien "Soy alumno" o "Soy entrenador", o consultá con tu profe.';
   if (codigo === 'auth/requires-recent-login') return 'Por seguridad, salí y volvé a entrar con tu código para crear la contraseña.';
   if (codigo === 'permission-denied') return 'No tenés permiso para hacer esto.';
+  if (codigo === 'rekover/sin-libreria-excel') return 'No se pudo abrir el lector de Excel. Revisá la conexión a internet e intentá de nuevo.';
+  if (codigo === 'rekover/planilla-vacia') return 'No encontré ejercicios en la planilla. Fijate que tenga filas "DÍA 1", la fila de títulos "Ejercicio" y los ejercicios debajo.';
   if (codigo === 'auth/configuration-not-found' || codigo === 'auth/operation-not-allowed')
     return 'El ingreso con correo y contraseña no está activado en Firebase.';
   console.error(e);
@@ -153,6 +164,18 @@ function diaDeSemana(fecha) { return new Date(fecha + 'T12:00').getDay(); }
 
 // "viernes 30/10"
 function fechaLarga(fecha) { return `${DIAS[diaDeSemana(fecha)].toLowerCase()} ${formatoFecha(fecha)}`; }
+
+// Suma (o resta) días a una fecha AAAA-MM-DD
+function sumarDias(fecha, dias) { const d = new Date(fecha + 'T12:00'); d.setDate(d.getDate() + dias); return fechaISO(d); }
+
+// Lunes de la semana de una fecha
+function lunesDe(fecha) { return sumarDias(fecha, -((diaDeSemana(fecha) + 6) % 7)); }
+
+// Repeticiones para mostrar: "8-10" o "Al fallo" si vienen así de la planilla, o el número
+function repsDe(ej) { return ej.repsTexto || ej.reps; }
+
+// Nota de técnica del ejercicio (biserie, descendente, etc.)
+function notaDe(ej) { return ej.nota ? `<p class="nota-ejercicio">${esc(ej.nota)}</p>` : ''; }
 
 // Cambios puntuales de una alumna: { 'AAAA-MM-DD': [ejercicios] }
 function cambiosDe(alumnaId) { return datos.cambios[alumnaId] || (datos.cambios[alumnaId] = {}); }
@@ -242,15 +265,17 @@ function pantallaAvisos() {
     }).join('') || '<div class="tarjeta vacio">Todavía no tenés notificaciones.</div>'}`;
 }
 
-// Pestañas de abajo: cada perfil ve solo las suyas
+// Pestañas de abajo: cada perfil ve solo las suyas (la administradora, además, Entrenadores)
 const PESTANAS = {
   alumna:   [['hoy', 'Rutina'], ['progreso', 'Progreso'], ['encuesta', 'Encuesta']],
   profesor: [['alumnas', 'Alumnos'], ['encuestas', 'Encuestas'], ['kinesio', 'Kinesio']],
+  admin:    [['alumnas', 'Alumnos'], ['entrenadores', 'Entrenadores'], ['encuestas', 'Encuestas'], ['kinesio', 'Kinesio']],
   paciente: [['turnos', 'Turnos']]
 };
+function pestanasDe(p) { return PESTANAS[p.esAdmin ? 'admin' : p.rol]; }
 
 function menuInferior() {
-  const lista = PESTANAS[perfil.rol];
+  const lista = pestanasDe(perfil);
   if (lista.length < 2) return '';
   return `<nav class="menu-inferior">${lista.map(([id, texto]) =>
     `<button class="${ui.pestana === id ? 'activa' : ''}" data-accion="pestana" data-valor="${id}">${texto}</button>`).join('')}</nav>`;
@@ -263,27 +288,31 @@ function pantallaIngreso() {
     ${logo(false)}
     <p class="ingreso-bajada">Sports Recovery</p>
     <h1>Ingresar</h1>
+    <div class="tipo-ingreso">
+      <button class="${ui.tipoIngreso === 'alumno' ? 'activa' : ''}" data-accion="tipo-ingreso" data-valor="alumno">Soy alumno</button>
+      <button class="${ui.tipoIngreso === 'entrenador' ? 'activa' : ''}" data-accion="tipo-ingreso" data-valor="entrenador">Soy entrenador</button>
+    </div>
     <form class="form-ingreso" data-form="ingreso" autocomplete="on">
-      <label class="campo">Usuario o DNI
-        <input name="usuario" required autocomplete="username" autocapitalize="none" placeholder="Tu usuario o tu DNI sin puntos">
+      <label class="campo">${ui.tipoIngreso === 'entrenador' ? 'Usuario o DNI' : 'DNI'}
+        <input name="usuario" required autocomplete="username" autocapitalize="none" ${ui.tipoIngreso === 'alumno' ? 'inputmode="numeric"' : ''}
+          placeholder="${ui.tipoIngreso === 'entrenador' ? 'Tu DNI sin puntos (o tu usuario)' : 'Tu DNI sin puntos'}">
       </label>
       <label class="campo">Contraseña
         <input name="clave" type="password" autocomplete="current-password" placeholder="Tu contraseña">
       </label>
-      <p class="nota-chica">¿Es tu primera vez? Escribí tu DNI y, como contraseña, el código de 8 números que te dio tu profe.</p>
+      <p class="nota-chica">¿Es tu primera vez? Escribí tu DNI y, como contraseña, el código de 8 números que te ${ui.tipoIngreso === 'entrenador' ? 'dio la administración del gimnasio' : 'dio tu entrenador'}.</p>
       ${ui.errorIngreso ? `<p class="error">${esc(ui.errorIngreso)}</p>` : ''}
       <button type="submit" class="boton ancho" ${ui.ocupado ? 'disabled' : ''}>${ui.ocupado ? 'Ingresando…' : 'Ingresar'}</button>
     </form>
   </section>`;
 }
 
-// Primer ingreso de una alumna: crea su propia contraseña
+// Primer ingreso de un alumno o entrenador: crea su propia contraseña
 function pantallaCrearClave() {
-  const alumna = alumnaPorId(perfil.alumnaId);
   return `<section class="ingreso">
     ${logo(false)}
     <p class="ingreso-bajada">Sports Recovery</p>
-    <h1>Hola, ${esc(alumna.nombre.split(' ')[0])}</h1>
+    <h1>Hola, ${esc(perfil.nombre.split(' ')[0])}</h1>
     <p class="suave">Es tu primer ingreso. Creá tu contraseña: desde ahora la vas a usar junto con tu DNI y el código ya no va a servir.</p>
     <form class="form-ingreso" data-form="crear-clave">
       <label class="campo">Nueva contraseña
@@ -375,12 +404,12 @@ function alumnaHoy() {
     const base = hecho || ej; // si ya registró, se muestra lo que hizo
     return `<article class="tarjeta ejercicio ${hecho ? 'hecho' : ''}">
       <div class="ejercicio-titulo">
-        <div><small class="musculo">${esc(ej.musculo)}</small><h3>${esc(ej.nombre)}</h3></div>
+        <div><small class="musculo">${esc(ej.musculo)}</small><h3>${esc(ej.nombre)}</h3>${notaDe(ej)}</div>
         ${hecho ? '<span class="check">✓</span>' : ''}
       </div>
       <div class="datos-ejercicio">
         <div><b>${ej.series}</b><small>series</small></div>
-        <div><b>${ej.reps}</b><small>reps</small></div>
+        <div><b>${esc(repsDe(ej))}</b><small>reps</small></div>
         <div><b>${formatoPeso(ej.peso)}</b><small>peso</small></div>
         <div><b>${formatoPausa(ej.pausa)}</b><small>pausa</small></div>
       </div>
@@ -416,20 +445,54 @@ function alumnaHoy() {
 
 function alumnaProgreso() {
   const alumnaId = perfil.alumnaId;
-  const propios = datos.registros.filter(r => r.alumnaId === alumnaId);
-  const nombres = [...new Set(propios.map(r => r.nombre))];
+  const est = estadisticasDe(alumnaId);
+  const nombre = esc(perfil.nombre.split(' ')[0]);
   const nota = datos.notasProgreso[alumnaId];
-  const mensajeProfe = (nota ? `<div class="tarjeta nota-profe"><h3>Mensaje de tu profe</h3><p>${esc(nota)}</p></div>` : '')
-    + evaluacionDeAlumna(alumnaId);
-  if (!nombres.length) return `<h1>Mi progreso</h1><div class="tarjeta vacio">Todavía no registraste ejercicios.</div>${mensajeProfe}`;
-  if (!nombres.includes(ui.ejercicioGrafico)) ui.ejercicioGrafico = nombres[0];
+  const mensajeProfe = nota ? `<div class="tarjeta nota-profe"><h3>Mensaje de tu profe</h3><p>${esc(nota)}</p></div>` : '';
 
-  const puntos = propios.filter(r => r.nombre === ui.ejercicioGrafico).sort((a, b) => a.fecha.localeCompare(b.fecha));
-  const mejorPeso = Math.max(...puntos.map(p => p.peso));
-  const mejorReps = Math.max(...puntos.map(p => p.reps));
-  const aumento = puntos[puntos.length - 1].peso - puntos[0].peso;
+  if (!est.ejercicios.length) {
+    return `<div class="tarjeta saludo"><h1>¡Hola, ${nombre}!</h1>
+        <p>Tu progreso arranca con el primer registro. Anotá lo que hagas hoy en <b>Rutina</b> y desde acá vas a ver, con números, cuánto avanzás semana a semana.</p></div>
+      ${mensajeProfe}${evaluacionDeAlumna(alumnaId)}`;
+  }
 
-  return `<h1>Mi progreso</h1>
+  const nombres = est.ejercicios.map(e => e.nombre);
+  if (!nombres.includes(ui.ejercicioGrafico)) ui.ejercicioGrafico = (est.ejercicios.find(e => e.conPeso) || est.ejercicios[0]).nombre;
+  const elegido = est.ejercicios.find(e => e.nombre === ui.ejercicioGrafico);
+  const mejorReps = Math.max(...elegido.lista.map(r => r.reps));
+  const mejorPeso = Math.max(...elegido.lista.map(r => r.peso));
+  const aumento = elegido.ultimo.peso - elegido.primero.peso;
+  const conPorcentaje = est.ejercicios.filter(e => e.pct !== null).sort((a, b) => b.pct - a.pct);
+  const maxBarra = Math.max(10, ...conPorcentaje.map(e => Math.abs(e.pct)));
+
+  return `<div class="tarjeta saludo">
+      <h1>${tituloSaludo(est, nombre)}</h1>
+      ${mensajesSaludo(est).map(m => `<p>${m}</p>`).join('')}
+    </div>
+
+    <div class="resumen">
+      <div class="tarjeta"><b>🔥 ${est.racha}</b><small>${est.racha === 1 ? 'semana seguida' : 'semanas seguidas'}</small></div>
+      <div class="tarjeta"><b>📅 ${est.esteMes}</b><small>${est.esteMes === 1 ? 'entrenamiento' : 'entrenamientos'} este mes</small></div>
+      <div class="tarjeta"><b>🏆 ${est.records.length}</b><small>${est.records.length === 1 ? 'récord' : 'récords'}</small></div>
+    </div>
+
+    ${est.promedio !== null ? `<div class="tarjeta mejora-general">
+        <small>Tu mejora promedio desde que empezaste</small>
+        <b class="${est.promedio > 0 ? 'oro' : ''}">${est.promedio > 0 ? '+' : ''}${est.promedio} %</b>
+        <p>${est.promedio > 0 ? `Sumando todos tus ejercicios, hoy movés en promedio un ${est.promedio} % más que el primer día.` : 'Por ahora estás sosteniendo tus marcas iniciales. Sostener también es parte del proceso.'}</p>
+      </div>` : ''}
+
+    ${conPorcentaje.length ? `<h2>Cuánto mejoraste en cada ejercicio</h2>
+      <div class="tarjeta">${conPorcentaje.map(e => `
+        <button class="barra-ejercicio ${e.nombre === ui.ejercicioGrafico ? 'activa' : ''}" data-accion="ver-ejercicio" data-valor="${esc(e.nombre)}">
+          <span class="fila-separada"><span>${esc(e.nombre)}${e.record ? ' 🏆' : ''}</span>
+            <b class="${e.pct > 0 ? 'oro' : ''}">${e.pct > 0 ? '+' : ''}${e.pct} %</b></span>
+          <span class="barra"><i class="${e.pct < 0 ? 'baja' : ''}" style="width:${Math.max(3, Math.abs(e.pct) / maxBarra * 100)}%"></i></span>
+          <small>${valorConUnidad(e, e.primero)} → ${valorConUnidad(e, e.ultimo)}</small>
+        </button>`).join('')}
+      </div>` : ''}
+
+    <h2>Detalle por ejercicio</h2>
     <label class="campo">Ejercicio
       <select data-cambio="ejercicio-grafico">
         ${nombres.map(n => `<option ${n === ui.ejercicioGrafico ? 'selected' : ''}>${esc(n)}</option>`).join('')}
@@ -438,18 +501,110 @@ function alumnaProgreso() {
     <div class="resumen">
       <div class="tarjeta"><b>${formatoPeso(mejorPeso)}</b><small>Mejor peso</small></div>
       <div class="tarjeta"><b>${mejorReps}</b><small>Máx. repeticiones</small></div>
-      <div class="tarjeta"><b class="${aumento > 0 ? 'oro' : ''}">${aumento > 0 ? '+' : ''}${numero(aumento)} kg</b><small>Aumento desde el inicio</small></div>
+      <div class="tarjeta"><b class="${aumento > 0 ? 'oro' : ''}">${aumento > 0 ? '+' : ''}${numero(aumento)} kg</b>
+        <small>${elegido.pct !== null && elegido.conPeso ? `${elegido.pct > 0 ? '+' : ''}${elegido.pct} % desde el inicio` : 'Aumento desde el inicio'}</small></div>
     </div>
     <div class="tarjeta">
       <h3>Peso (kg)</h3>
-      ${grafico(puntos.map(p => ({ fecha: p.fecha, valor: p.peso })), 'var(--azul)')}
+      ${grafico(elegido.lista.map(r => ({ fecha: r.fecha, valor: r.peso })), 'var(--azul)')}
+      ${elegido.conPeso && elegido.lista.length > 1 ? '<p class="nota-chica">El punto dorado es tu mejor marca.</p>' : ''}
     </div>
     <div class="tarjeta significado">
       <h3>Qué significa tu progreso</h3>
-      <p>${significadoProgreso(puntos, mejorPeso, mejorReps)}</p>
+      <p>${significadoProgreso(elegido.lista, mejorPeso, mejorReps)}</p>
     </div>
-    ${mensajeProfe}`;
+
+    ${est.records.length ? `<h2>Tus récords 🏆</h2>
+      <div class="tarjeta">${est.records.map(e => `<div class="fila-separada fila-test">
+          <span>${esc(e.nombre)}</span><b>${valorConUnidad(e, e.record)} <small class="suave">· ${formatoFecha(e.record.fecha)}</small></b>
+        </div>`).join('')}
+        <p class="nota-chica">Cada récord es una marca que antes no podías hacer.</p>
+      </div>` : ''}
+
+    ${comparacionConEvaluacion(alumnaId, est)}
+    ${mensajeProfe}
+    ${evaluacionDeAlumna(alumnaId)}`;
 }
+
+// Números del progreso de un alumno: mejoras por ejercicio, récords y constancia
+function estadisticasDe(alumnaId) {
+  const registros = datos.registros.filter(r => r.alumnaId === alumnaId);
+  const porEjercicio = {};
+  registros.forEach(r => (porEjercicio[r.nombre] ||= []).push(r));
+
+  const ejercicios = Object.entries(porEjercicio).map(([nombre, lista]) => {
+    lista.sort((a, b) => a.fecha.localeCompare(b.fecha));
+    const conPeso = lista.some(r => r.peso > 0);
+    const valor = r => conPeso ? r.peso : r.reps; // sin peso, se mide por repeticiones
+    const primero = lista[0], ultimo = lista[lista.length - 1];
+    const pct = lista.length > 1 && valor(primero) > 0 ? Math.round((valor(ultimo) - valor(primero)) / valor(primero) * 100) : null;
+    // Récord: la mejor marca, si superó a todas las anteriores
+    const mejor = Math.max(...lista.map(valor));
+    const i = lista.findIndex(r => valor(r) === mejor);
+    const record = i > 0 && mejor > Math.max(...lista.slice(0, i).map(valor)) ? lista[i] : null;
+    return { nombre, lista, conPeso, primero, ultimo, pct, record };
+  });
+
+  const fechas = [...new Set(registros.map(r => r.fecha))];
+  const mes = fechaISO().slice(0, 7);
+  const mesPasado = sumarDias(mes + '-01', -1).slice(0, 7);
+  const semanas = new Set(fechas.map(lunesDe));
+  // Semanas seguidas con al menos un entrenamiento (la semana actual cuenta si ya entrenó)
+  let racha = 0, semana = lunesDe(fechaISO());
+  if (!semanas.has(semana)) semana = sumarDias(semana, -7);
+  while (semanas.has(semana)) { racha++; semana = sumarDias(semana, -7); }
+  const medibles = ejercicios.filter(e => e.pct !== null);
+
+  return {
+    ejercicios, racha,
+    esteMes: fechas.filter(f => f.startsWith(mes)).length,
+    mesAnterior: fechas.filter(f => f.startsWith(mesPasado)).length,
+    promedio: medibles.length ? Math.round(medibles.reduce((suma, e) => suma + e.pct, 0) / medibles.length) : null,
+    records: ejercicios.filter(e => e.record)
+  };
+}
+
+function valorConUnidad(ejercicio, registro) {
+  return ejercicio.conPeso ? formatoPeso(registro.peso) : `${registro.reps} reps`;
+}
+
+function tituloSaludo(est, nombre) {
+  if (est.promedio >= 10) return `¡Vas muy bien, ${nombre}!`;
+  if (est.promedio > 0) return `¡Vas por buen camino, ${nombre}!`;
+  if (est.esteMes > 0) return `¡Bien ahí, ${nombre}!`;
+  return `¡Hola, ${nombre}!`;
+}
+
+// Frases cálidas pero reales: siempre con los números del alumno
+function mensajesSaludo(est) {
+  const mensajes = [];
+  const veces = n => n === 1 ? '1 vez' : `${n} veces`;
+  if (est.esteMes > est.mesAnterior && est.mesAnterior > 0) mensajes.push(`Este mes entrenaste ${veces(est.esteMes)}: ${est.esteMes - est.mesAnterior} más que el mes pasado. Eso es constancia.`);
+  else if (est.esteMes > 0) mensajes.push(`Este mes ya entrenaste ${veces(est.esteMes)}. Cada entrenamiento suma.`);
+  else mensajes.push('Este mes todavía no registraste entrenamientos. El mejor momento para retomar es hoy: tu progreso te espera donde lo dejaste.');
+  if (est.racha >= 2) mensajes.push(`Llevás <b>${est.racha} semanas seguidas</b> sin aflojar. Así se construyen los resultados.`);
+  const mejor = est.ejercicios.filter(e => e.pct > 0).sort((a, b) => b.pct - a.pct)[0];
+  if (mejor) mensajes.push(`Tu mayor avance es en <b>${esc(mejor.nombre)}</b>: un ${mejor.pct} % más que cuando empezaste.`);
+  return mensajes;
+}
+
+// Compara con la evaluación inicial (tests de peso máximo) usando lo que registró después
+function comparacionConEvaluacion(alumnaId, est) {
+  const tests = testsDe(alumnaId).filter(t => t.unidad === 'kg' && t.resultado > 0);
+  const filas = tests.map(t => {
+    const clave = t.nombre.split(':')[0].trim().toLowerCase();
+    const ejercicio = est.ejercicios.find(e => e.conPeso && e.nombre.toLowerCase().includes(clave));
+    if (!ejercicio) return '';
+    // Máximo estimado (fórmula de Epley): peso × (1 + repeticiones / 30)
+    const hoy = Math.max(...ejercicio.lista.map(r => r.peso * (1 + r.reps / 30)));
+    const pct = Math.round((hoy - t.resultado) / t.resultado * 100);
+    return `<p>Cuando empezaste, tu máximo en <b>${esc(clave)}</b> era de ${formatoPeso(t.resultado)}. ${pct > 0
+      ? `Por lo que registrás, hoy tu máximo estimado ronda los <b>${formatoPeso(Math.round(hoy * 2) / 2)}</b>: un <b class="oro">${pct} % más</b>.`
+      : `Hoy estás cerca de esa marca. Seguí sumando semanas: la fuerza se construye de a poco.`}</p>`;
+  }).filter(Boolean);
+  return filas.length ? `<div class="tarjeta"><h3>Desde tu evaluación inicial</h3>${filas.join('')}</div>` : '';
+}
+function testsDe(alumnaId) { return datos.evaluaciones[alumnaId]?.tests || []; }
 
 // La alumna ve su evaluación inicial, sin poder cambiarla
 function evaluacionDeAlumna(alumnaId) {
@@ -468,22 +623,29 @@ function evaluacionDeAlumna(alumnaId) {
     </div>`;
 }
 
-// Explica el progreso en palabras simples, con los números reales
+// Explica el progreso en palabras simples, con los números reales y con calidez
 function significadoProgreso(puntos, mejorPeso, mejorReps) {
   const nombre = esc(ui.ejercicioGrafico);
   const primero = puntos[0], ultimo = puntos[puntos.length - 1];
-  if (puntos.length < 2) return `Tenés un solo registro de ${nombre}. Con dos o más vas a ver cuánto avanzaste.`;
-  if (mejorPeso === 0) return `${nombre} se hace sin peso. Llegaste a ${mejorReps} repeticiones en una serie.`;
+  if (puntos.length < 2) return `Ya tenés tu primer registro de ${nombre}. Con el próximo vas a empezar a ver cuánto avanzás.`;
+  if (mejorPeso === 0) {
+    const masReps = ultimo.reps - primero.reps;
+    return masReps > 0
+      ? `${nombre} se hace sin peso, y pasaste de ${primero.reps} a ${ultimo.reps} repeticiones. Más repeticiones es más resistencia: muy bien.`
+      : `${nombre} se hace sin peso. Tu mejor marca es de ${mejorReps} repeticiones en una serie: el próximo objetivo es superarla.`;
+  }
   const dias = (new Date(ultimo.fecha) - new Date(primero.fecha)) / 864e5;
   const semanas = Math.max(1, Math.round(dias / 7));
   const tiempo = semanas === 1 ? '1 semana' : `${semanas} semanas`;
   const diferencia = ultimo.peso - primero.peso;
   if (diferencia > 0) {
-    const porcentaje = primero.peso > 0 ? ` (un ${Math.round(diferencia / primero.peso * 100)}% más)` : '';
-    return `En ${tiempo} pasaste de ${formatoPeso(primero.peso)} a ${formatoPeso(ultimo.peso)} en ${nombre}: levantás ${numero(diferencia)} kg más${porcentaje}. Tu mejor marca es ${formatoPeso(mejorPeso)} y llegaste a ${mejorReps} repeticiones en una serie.`;
+    const pct = primero.peso > 0 ? Math.round(diferencia / primero.peso * 100) : 0;
+    return `En ${tiempo} pasaste de ${formatoPeso(primero.peso)} a ${formatoPeso(ultimo.peso)} en ${nombre}: son ${numero(diferencia)} kg más${pct ? `, un ${pct} % más de carga` : ''}. ${pct >= 20
+      ? 'Es un avance enorme, y es mérito tuyo: se nota el trabajo de cada semana.'
+      : 'Cada kilo que sumás es fuerza que antes no tenías. Seguí así.'}`;
   }
-  if (diferencia === 0) return `Hace ${tiempo} que trabajás con ${formatoPeso(ultimo.peso)} en ${nombre}. Cuando completes todas las repeticiones con buena técnica, es momento de hablar con tu profe para subir el peso.`;
-  return `Hoy usás ${numero(-diferencia)} kg menos que al inicio en ${nombre}. Puede ser parte del plan (técnica o recuperación): consultalo con tu profe.`;
+  if (diferencia === 0) return `Hace ${tiempo} que sostenés ${formatoPeso(ultimo.peso)} en ${nombre}. Sostener también es progreso: cuando completes todas las repeticiones con buena técnica, hablalo con tu profe para subir.`;
+  return `Hoy usás ${numero(-diferencia)} kg menos que al inicio en ${nombre}. Bajar la carga a veces es parte del protocolo (técnica, recuperación o cansancio). Lo importante es que seguís entrenando: consultalo con tu profe.`;
 }
 
 // Dibuja un gráfico de línea simple con SVG (sin librerías externas)
@@ -502,7 +664,10 @@ function grafico(puntos, color) {
       <text x="${iz - 6}" y="${y(v) + 4}" text-anchor="end">${numero(v)}</text>`).join('');
   const etiquetas = puntos.map((p, i) => (i === 0 || i === puntos.length - 1 || puntos.length <= 5)
     ? `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${formatoFecha(p.fecha)}</text>` : '').join('');
-  const circulos = puntos.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.valor)}" r="3.5" fill="${color}"><title>${formatoFecha(p.fecha)}: ${numero(p.valor)} kg</title></circle>`).join('');
+  const mejor = Math.max(...valores);
+  const circulos = puntos.map((p, i) => p.valor === mejor && i === valores.indexOf(mejor)
+    ? `<circle cx="${x(i)}" cy="${y(p.valor)}" r="6" fill="var(--oro)"><title>Mejor marca · ${formatoFecha(p.fecha)}: ${numero(p.valor)} kg</title></circle>`
+    : `<circle cx="${x(i)}" cy="${y(p.valor)}" r="3.5" fill="${color}"><title>${formatoFecha(p.fecha)}: ${numero(p.valor)} kg</title></circle>`).join('');
   return `<svg class="grafico" viewBox="0 0 ${W} ${H}" role="img" aria-label="Gráfico de peso">
     ${guias}
     <path d="${area}" fill="${color}" opacity="0.12"/>
@@ -540,6 +705,7 @@ function tarjetaEncuesta(e) {
 /* ---------- Profesor ---------- */
 
 function pantallaProfesor() {
+  if (ui.pestana === 'entrenadores' && perfil.esAdmin) return ui.entrenadorId ? fichaEntrenador() : listaEntrenadores();
   if (ui.pestana === 'encuestas') return profesorEncuestas();
   if (ui.pestana === 'kinesio') return proximamente('Kinesiología', 'Acá vas a agregar turnos y registrar cada sesión: evaluación, protocolo y resultado.');
   return ui.alumnaId ? profesorFichaAlumna() : profesorAlumnas();
@@ -562,13 +728,13 @@ function profesorAlumnas() {
       const dias = Object.keys(datos.rutinas[a.id] || {}).filter(d => datos.rutinas[a.id][d].length).length;
       return `<button class="tarjeta fila-alumna" data-accion="elegir-alumna" data-valor="${a.id}">
         <span class="perfil-inicial">${esc(a.nombre[0])}</span>
-        <span class="crece"><strong>${esc(a.nombre)}</strong><small>${esc(a.disciplina)} · ${dias} ${dias === 1 ? 'día' : 'días'} con rutina</small>
+        <span class="crece"><strong>${esc(a.nombre)}</strong><small>${esc(a.disciplina)} · ${dias} ${dias === 1 ? 'día' : 'días'} con rutina${perfil.esAdmin ? ` · ${a.entrenadorUid ? 'Entrenador: ' + esc(a.entrenadorNombre) : 'Tuyo'}` : ''}</small>
           ${a.debeCambiarClave ? '<em class="etiqueta-propio">Falta su primer ingreso</em>' : ''}</span>
         <span class="flecha">›</span>
       </button>`;
     }).join('') || (datos.alumnas.length ? '<div class="tarjeta vacio">No hay alumnos en esta disciplina.</div>'
-      : `<div class="tarjeta vacio"><p>Todavía no cargaste alumnos.</p>
-          <button class="boton secundario" data-accion="cargar-ejemplo" ${ui.ocupado ? 'disabled' : ''}>${ui.ocupado ? 'Cargando…' : 'Cargar 3 alumnos de ejemplo para probar'}</button></div>`)}
+      : `<div class="tarjeta vacio"><p>Todavía no cargaste alumnos. Tocá "+ Nuevo alumno" para crear el primero.</p>
+          ${perfil.esAdmin ? `<button class="boton secundario" data-accion="cargar-ejemplo" ${ui.ocupado ? 'disabled' : ''}>${ui.ocupado ? 'Cargando…' : 'Cargar 3 alumnos de ejemplo para probar'}</button>` : ''}</div>`)}
     ${ui.nuevaAlumna ? `
       <form class="tarjeta" data-form="nueva-alumna">
         <h3>Nuevo alumno</h3>
@@ -588,13 +754,68 @@ function profesorAlumnas() {
     : '<button class="boton secundario ancho" data-accion="abrir-nueva-alumna">+ Nuevo alumno</button>'}`;
 }
 
+/* ---------- Entrenadores (solo la administradora) ---------- */
+
+function listaEntrenadores() {
+  return `<h1>Entrenadores</h1>
+    <p class="suave">Cada entrenador ve y maneja solo sus alumnos. Vos ves a todos.</p>
+    ${datos.entrenadores.map(e => {
+      const cantidad = datos.alumnas.filter(a => a.entrenadorUid === e.uid).length;
+      return `<button class="tarjeta fila-alumna" data-accion="elegir-entrenador" data-valor="${esc(e.uid)}">
+        <span class="perfil-inicial">${esc(e.nombre[0])}</span>
+        <span class="crece"><strong>${esc(e.nombre)}</strong><small>DNI ${esc(e.dni)} · ${cantidad} ${cantidad === 1 ? 'alumno' : 'alumnos'}</small>
+          ${e.debeCambiarClave ? '<em class="etiqueta-propio">Falta su primer ingreso</em>' : ''}</span>
+        <span class="flecha">›</span>
+      </button>`;
+    }).join('') || '<div class="tarjeta vacio">Todavía no hay entrenadores. Creá el primero con el botón de abajo.</div>'}
+    ${ui.nuevoEntrenador ? `
+      <form class="tarjeta" data-form="nuevo-entrenador">
+        <h3>Nuevo entrenador</h3>
+        <label class="campo">Nombre y apellido<input name="nombre" required maxlength="40" placeholder="Ej.: Juan Pérez"></label>
+        <label class="campo">DNI (sin puntos) — es su usuario para ingresar
+          <input name="dni" required inputmode="numeric" pattern="[0-9]{7,8}" maxlength="8" placeholder="Ej.: 28123456"></label>
+        <p class="nota-chica">La app genera un código de primer ingreso. Entra eligiendo "Soy entrenador", con su DNI y ese código, y crea su propia contraseña.</p>
+        ${ui.errorEntrenador ? `<p class="error">${esc(ui.errorEntrenador)}</p>` : ''}
+        <div class="fila-botones">
+          <button type="button" class="boton secundario" data-accion="cerrar-nuevo-entrenador">Cancelar</button>
+          <button type="submit" class="boton" ${ui.ocupado ? 'disabled' : ''}>${ui.ocupado ? 'Creando…' : 'Agregar'}</button>
+        </div>
+      </form>`
+    : '<button class="boton secundario ancho" data-accion="abrir-nuevo-entrenador">+ Nuevo entrenador</button>'}`;
+}
+
+function fichaEntrenador() {
+  const e = datos.entrenadores.find(x => x.uid === ui.entrenadorId);
+  if (!e) { ui.entrenadorId = null; return listaEntrenadores(); }
+  const suyos = datos.alumnas.filter(a => a.entrenadorUid === e.uid);
+  return `<button class="boton-texto volver" data-accion="volver-entrenadores">‹ Entrenadores</button>
+    <h1>${esc(e.nombre)}</h1>
+    <p class="suave">Entrenador · DNI ${esc(e.dni)}</p>
+    ${e.debeCambiarClave ? `
+      <div class="tarjeta codigo-ingreso">
+        <small>Código de primer ingreso</small>
+        <b>${esc(e.codigoInicial)}</b>
+        <p>Pasáselo a ${esc(e.nombre.split(' ')[0])}: entra eligiendo "Soy entrenador", con su DNI y este código, y crea su propia contraseña.</p>
+      </div>` : ''}
+    <div class="cuenta">
+      <span>${e.debeCambiarClave ? 'Todavía no creó su contraseña.' : 'Ya creó su contraseña.'}</span>
+      <button class="boton-texto" data-accion="restablecer-entrenador" ${ui.ocupado ? 'disabled' : ''}>${e.debeCambiarClave ? 'Generar otro código' : 'Restablecer'}</button>
+    </div>
+    <h2>Sus alumnos</h2>
+    ${suyos.map(a => `<button class="tarjeta fila-alumna" data-accion="ir-alumno" data-valor="${a.id}">
+        <span class="perfil-inicial">${esc(a.nombre[0])}</span>
+        <span class="crece"><strong>${esc(a.nombre)}</strong><small>${esc(a.disciplina)}</small></span>
+        <span class="flecha">›</span>
+      </button>`).join('') || '<div class="tarjeta vacio">Todavía no creó alumnos.</div>'}`;
+}
+
 // Ficha de una alumna: datos de su cuenta y pestañas Rutina / Evaluación inicial
 function profesorFichaAlumna() {
   const alumna = alumnaPorId(ui.alumnaId);
   const secciones = [['rutina', 'Rutina'], ['evaluacion', 'Evaluación inicial']];
   return `<button class="boton-texto volver" data-accion="volver">‹ Alumnos</button>
     <h1>${esc(alumna.nombre)}</h1>
-    <p class="suave">${esc(alumna.disciplina)} · DNI ${esc(alumna.dni)}</p>
+    <p class="suave">${esc(alumna.disciplina)} · DNI ${esc(alumna.dni)}${perfil.esAdmin && alumna.entrenadorUid ? ` · Entrenador: ${esc(alumna.entrenadorNombre)}` : ''}</p>
     ${alumna.debeCambiarClave ? `
       <div class="tarjeta codigo-ingreso">
         <small>Código de primer ingreso</small>
@@ -612,6 +833,7 @@ function profesorFichaAlumna() {
 }
 
 function profesorRutina(alumna) {
+  if (ui.importacion) return vistaImportacion(alumna);
   const modos = [['semanal', 'Rutina semanal'], ['fecha', 'Cambiar una fecha']];
   const elegirModo = `<div class="chips">${modos.map(([id, texto]) =>
     `<button class="chip ${ui.modoRutina === id ? 'activa' : ''}" data-accion="modo-rutina" data-valor="${id}">${texto}</button>`).join('')}</div>`;
@@ -638,7 +860,90 @@ function profesorRutina(alumna) {
     encabezado += `<div class="aviso-especial fila-separada"><span>Rutina especial solo para este día.</span>
       <button class="boton-texto" data-accion="quitar-cambios">Volver a la semanal</button></div>`;
   }
-  return elegirModo + encabezado + editorRutina(alumna) + notaProgreso(alumna);
+  return elegirModo + encabezado + editorRutina(alumna) + botonExcel() + notaProgreso(alumna);
+}
+
+/* ---------- Subir la rutina desde Excel ---------- */
+
+function botonExcel() {
+  return `<label class="boton secundario ancho boton-excel ${ui.ocupado ? 'deshabilitado' : ''}">
+      ${ui.ocupado ? 'Leyendo la planilla…' : '📄 Subir rutina desde Excel'}
+      <input type="file" accept=".xlsx,.xls" data-cambio="subir-excel" hidden ${ui.ocupado ? 'disabled' : ''}>
+    </label>`;
+}
+
+// Vista previa de la planilla: el profesor elige cómo cargarla y revisa antes de guardar
+function vistaImportacion(alumna) {
+  const imp = ui.importacion;
+  const semana = imp.semanas[imp.modo === 'mes' ? 0 : imp.semana];
+  const usados = imp.dias.slice(0, semana.dias.length);
+  const repetidos = usados.some((d, i) => usados.indexOf(d) !== i);
+  const opcionesDia = elegido => [1, 2, 3, 4, 5, 6, 0].map(d => `<option value="${d}" ${d === elegido ? 'selected' : ''}>${DIAS[d]}</option>`).join('');
+  const fin = sumarDias(imp.inicio, imp.semanas.length * 7 - 1);
+
+  return `<h2>Subir rutina desde Excel</h2>
+    <p class="suave">${esc(imp.archivo)} · ${imp.semanas.length} ${imp.semanas.length === 1 ? 'semana' : 'semanas'} · ${semana.dias.length} días. Revisá cómo queda antes de guardar.</p>
+
+    <div class="tarjeta">
+      <h3>¿Cómo la cargo?</h3>
+      <div class="opciones-carga">
+        <button class="opcion ${imp.modo === 'semanal' ? 'elegida' : ''}" data-accion="importar-modo" data-valor="semanal">
+          <span>Una semana que se repite</span><small>${imp.modo === 'semanal' ? '✓' : ''}</small></button>
+        ${imp.semanas.length > 1 ? `<button class="opcion ${imp.modo === 'mes' ? 'elegida' : ''}" data-accion="importar-modo" data-valor="mes">
+          <span>Las ${imp.semanas.length} semanas, cada una en su fecha</span><small>${imp.modo === 'mes' ? '✓' : ''}</small></button>` : ''}
+      </div>
+      ${imp.modo === 'semanal' ? `
+        <label class="campo">Semana de la planilla
+          <select data-cambio="importar-semana">${imp.semanas.map((s, i) => `<option value="${i}" ${i === imp.semana ? 'selected' : ''}>${esc(s.nombre)}</option>`).join('')}</select>
+        </label>
+        <p class="nota-chica">Se repite todas las semanas, como la rutina semanal.</p>`
+      : `
+        <label class="campo">Empieza la semana del
+          <input type="date" value="${imp.inicio}" data-cambio="importar-inicio">
+        </label>
+        <p class="nota-chica">${esc(imp.semanas[0].nombre)} va del ${fechaLarga(imp.inicio)} en adelante, y así hasta el ${fechaLarga(fin)}. Después sigue la ${esc(imp.semanas[0].nombre)} como rutina semanal.</p>`}
+    </div>
+
+    <div class="tarjeta">
+      <h3>¿Qué día de la semana es cada uno?</h3>
+      ${semana.dias.map((d, i) => `
+        <label class="campo fila-dia">${esc(d.titulo)}
+          <select data-cambio="importar-dia" data-indice="${i}">${opcionesDia(imp.dias[i])}</select>
+        </label>`).join('')}
+      ${repetidos ? '<p class="error">Hay dos días de la planilla en el mismo día de la semana: el segundo reemplazaría al primero.</p>' : ''}
+    </div>
+
+    ${semana.dias.map((d, i) => `
+      <div class="tarjeta vista-dia">
+        <h3>${DIAS[imp.dias[i]]} · ${esc(d.titulo)}</h3>
+        ${d.ejercicios.map(e => `<div class="fila-vista">
+            <span><b>${esc(e.nombre)}</b> <small class="musculo">${esc(e.musculo)}</small>${e.nota ? `<br><small class="suave">${esc(e.nota)}</small>` : ''}</span>
+            <span class="vista-datos">${e.series} × ${esc(repsDe(e))}${e.peso ? ` · ${formatoPeso(e.peso)}` : ''}</span>
+          </div>`).join('')}
+      </div>`).join('')}
+
+    <p class="nota-chica">Los días de la semana que no están en la planilla no se tocan. Los días que sí están se reemplazan por lo de la planilla.</p>
+    <div class="fila-botones">
+      <button class="boton secundario" data-accion="importar-cancelar">Cancelar</button>
+      <button class="boton" data-accion="importar-guardar" ${repetidos ? 'disabled' : ''}>Guardar rutina</button>
+    </div>`;
+}
+
+// Pasa la planilla a la rutina del alumno
+function guardarImportacion(alumna) {
+  const imp = ui.importacion;
+  const copia = x => JSON.parse(JSON.stringify(x));
+  const rutinas = datos.rutinas[alumna.id] || (datos.rutinas[alumna.id] = {});
+  const base = imp.semanas[imp.modo === 'mes' ? 0 : imp.semana];
+  base.dias.forEach((d, i) => { rutinas[imp.dias[i]] = copia(d.ejercicios); });
+  if (imp.modo === 'mes') {
+    const cambios = cambiosDe(alumna.id);
+    imp.semanas.forEach((semana, s) => semana.dias.forEach((d, i) => {
+      cambios[sumarDias(imp.inicio, s * 7 + (imp.dias[i] + 6) % 7)] = copia(d.ejercicios);
+    }));
+  }
+  ui.importacion = null;
+  guardarFicha(alumna.id, 'importacion');
 }
 
 // Lista de ejercicios para armar o cambiar una rutina (la usan el profesor y el alumno)
@@ -647,7 +952,7 @@ function editorRutina(alumna) {
     <article class="tarjeta ejercicio">
       <div class="ejercicio-titulo">
         <div><small class="musculo">${esc(ej.musculo)}</small><h3>${esc(ej.nombre)}</h3>
-          ${ej.porAlumno && perfil.rol === 'profesor' ? '<em class="etiqueta-propio">Cambio del alumno</em>' : ''}</div>
+          ${ej.porAlumno && perfil.rol === 'profesor' ? '<em class="etiqueta-propio">Cambio del alumno</em>' : ''}${notaDe(ej)}</div>
         <div class="acciones-ejercicio">
           <button class="boton-texto" data-accion="reemplazar" data-valor="${i}">Cambiar</button>
           <button class="boton-icono" data-accion="quitar" data-valor="${i}" aria-label="Quitar ejercicio">✕</button>
@@ -655,7 +960,7 @@ function editorRutina(alumna) {
       </div>
       <div class="ajustes">
         ${ajuste(i, 'series', 'Series', ej.series)}
-        ${ajuste(i, 'reps', 'Reps', ej.reps)}
+        ${ajuste(i, 'reps', 'Reps', esc(repsDe(ej)))}
         ${ajuste(i, 'peso', 'Peso', formatoPeso(ej.peso))}
         ${ajuste(i, 'pausa', 'Pausa', formatoPausa(ej.pausa))}
       </div>
@@ -816,6 +1121,27 @@ app.addEventListener('click', ev => {
       servidor.salir(); // al cerrar la sesión, alCambiarSesion vuelve a la pantalla de ingreso
       return;
     case 'cargar-ejemplo': cargarEjemplo(); return;
+    case 'tipo-ingreso': ui.tipoIngreso = v; ui.errorIngreso = ''; break;
+    case 'elegir-entrenador': ui.entrenadorId = v; window.scrollTo(0, 0); break;
+    case 'volver-entrenadores': ui.entrenadorId = null; break;
+    case 'abrir-nuevo-entrenador': ui.nuevoEntrenador = true; ui.errorEntrenador = ''; break;
+    case 'cerrar-nuevo-entrenador': ui.nuevoEntrenador = false; break;
+    case 'restablecer-entrenador': {
+      const e = datos.entrenadores.find(x => x.uid === ui.entrenadorId);
+      if (!confirm(`¿Generar un código nuevo para ${e.nombre}? Su contraseña o código actual dejan de servir, y con el nuevo código crea otra contraseña. Sus alumnos siguen siendo suyos.`)) return;
+      ui.ocupado = true; dibujar();
+      servidor.restablecerEntrenador(e)
+        .then(({ uid, codigo }) => {
+          const viejo = e.uid;
+          Object.assign(e, { uid, codigoInicial: codigo, debeCambiarClave: true });
+          datos.alumnas.filter(a => a.entrenadorUid === viejo).forEach(a => { a.entrenadorUid = uid; });
+          ui.entrenadorId = uid;
+          mostrarAviso('Código nuevo generado');
+        })
+        .catch(mostrarError)
+        .finally(() => { ui.ocupado = false; dibujar(); });
+      return;
+    }
     case 'avisos': {
       ui.verAvisos = !ui.verAvisos;
       // Al abrir la lista, las notificaciones quedan como leídas
@@ -828,6 +1154,7 @@ app.addEventListener('click', ev => {
       ui.agregando = false; ui.creando = false; ui.modoRutina = 'semanal'; ui.dia = new Date().getDay(); ui.fechaRutina = fechaISO();
       break;
     case 'pestana':
+      ui.entrenadorId = null; ui.nuevoEntrenador = false;
       ui.verAvisos = false; ui.editando = false; ui.eligiendoAlcance = false; ui.reemplazando = null;
       ui.pestana = v; ui.alumnaId = null; ui.agregando = false; ui.creando = false; ui.registrando = null;
       ui.dia = new Date().getDay(); ui.fecha = fechaISO(); ui.estrellas = 0; ui.comentario = '';
@@ -868,6 +1195,7 @@ app.addEventListener('click', ev => {
       ui.editando = false; ui.agregando = false; ui.creando = false; ui.reemplazando = null;
       mostrarAviso('Rutina guardada'); return;
     // Alumno: registrar
+    case 'ver-ejercicio': ui.ejercicioGrafico = v; break;
     case 'registrar': ui.registrando = Number(v); break;
     case 'cancelar-registro': ui.registrando = null; break;
     case 'estrella': ui.estrellas = Number(v); break;
@@ -878,7 +1206,7 @@ app.addEventListener('click', ev => {
       ui.seccionAlumna = 'rutina'; ui.agregandoTest = false;
       ui.dia = new Date().getDay(); ui.modoRutina = 'semanal'; ui.fechaRutina = fechaISO();
       break;
-    case 'volver': ui.alumnaId = null; ui.agregando = false; ui.creando = false; break;
+    case 'volver': ui.importacion = null; ui.alumnaId = null; ui.agregando = false; ui.creando = false; break;
     case 'seccion-alumna': ui.seccionAlumna = v; ui.agregandoTest = false; break;
     case 'restablecer-clave': {
       const alumna = alumnaPorId(ui.alumnaId);
@@ -898,6 +1226,9 @@ app.addEventListener('click', ev => {
       break;
     case 'abrir-nueva-alumna': ui.nuevaAlumna = true; ui.errorAlumna = ''; break;
     case 'cerrar-nueva-alumna': ui.nuevaAlumna = false; break;
+    case 'importar-modo': ui.importacion.modo = v; break;
+    case 'importar-cancelar': ui.importacion = null; break;
+    case 'importar-guardar': guardarImportacion(alumnaPorId(ui.alumnaId)); window.scrollTo(0, 0); mostrarAviso('Rutina cargada desde el Excel'); return;
     case 'abrir-agregar': ui.agregando = true; ui.reemplazando = null; break;
     case 'cerrar-agregar': ui.agregando = false; ui.creando = false; ui.reemplazando = null; break;
     case 'reemplazar': ui.agregando = true; ui.creando = false; ui.reemplazando = Number(v); break;
@@ -917,6 +1248,7 @@ app.addEventListener('click', ev => {
       const ej = rutinaEditable(ui.alumnaId)[Number(b.dataset.indice)];
       const campo = b.dataset.campo;
       ej[campo] = Math.max(MINIMOS[campo], ej[campo] + Number(b.dataset.delta) * PASOS[campo]);
+      if (campo === 'reps') delete ej.repsTexto; // al tocar − / + pasa a ser un número fijo
       marcarAutor(ej);
       guardarFicha(ui.alumnaId);
       break;
@@ -931,6 +1263,25 @@ app.addEventListener('change', ev => {
   if (cambio === 'fecha-alumna' && ev.target.value) { ui.fecha = ev.target.value; ui.registrando = null; dibujar(); }
   if (cambio === 'fecha-rutina' && ev.target.value) { ui.fechaRutina = ev.target.value; ui.agregando = false; dibujar(); }
   if (cambio === 'tipo-test') { ui.testElegido = ev.target.value; dibujar(); }
+  if (cambio === 'importar-semana') { ui.importacion.semana = Number(ev.target.value); dibujar(); }
+  if (cambio === 'importar-inicio' && ev.target.value) { ui.importacion.inicio = lunesDe(ev.target.value); dibujar(); }
+  if (cambio === 'importar-dia') { ui.importacion.dias[Number(ev.target.dataset.indice)] = Number(ev.target.value); dibujar(); }
+  if (cambio === 'subir-excel' && ev.target.files[0]) {
+    const archivo = ev.target.files[0];
+    ui.ocupado = true; dibujar();
+    leerPlanilla(archivo)
+      .then(({ semanas }) => {
+        const maxDias = Math.max(...semanas.map(s => s.dias.length));
+        ui.importacion = {
+          archivo: archivo.name, semanas, modo: 'semanal', semana: 0,
+          inicio: sumarDias(lunesDe(fechaISO()), 7),                       // el lunes que viene
+          dias: Array.from({ length: maxDias }, (_, i) => (i + 1) % 7)      // Día 1 = lunes, Día 2 = martes…
+        };
+        window.scrollTo(0, 0);
+      })
+      .catch(mostrarError)
+      .finally(() => { ui.ocupado = false; dibujar(); });
+  }
   if (cambio === 'test-resultado') {
     const test = datos.evaluaciones[ui.alumnaId].tests[Number(ev.target.dataset.indice)];
     test.resultado = Math.max(0, Number(ev.target.value) || 0);
@@ -978,7 +1329,7 @@ app.addEventListener('submit', ev => {
   if (f.dataset.form === 'ingreso') {
     ui.errorIngreso = ''; ui.ocupado = true; dibujar();
     // Si los datos coinciden, alCambiarSesion se encarga de traer los datos y mostrar la app
-    servidor.ingresar(String(campos.get('usuario')), String(campos.get('clave')))
+    servidor.ingresar(String(campos.get('usuario')), String(campos.get('clave')), ui.tipoIngreso)
       .catch(e => { ui.errorIngreso = mensajeError(e); })
       .finally(() => { ui.ocupado = false; dibujar(); });
   }
@@ -990,7 +1341,7 @@ app.addEventListener('submit', ev => {
     else if (clave !== campos.get('repetir')) ui.errorIngreso = 'Las dos contraseñas no son iguales. Escribilas de nuevo.';
     else {
       ui.ocupado = true; dibujar();
-      servidor.cambiarClave(perfil.alumnaId, clave)
+      servidor.cambiarClave(perfil, clave)
         .then(() => {
           perfil.debeCambiarClave = false;
           dejarDeEscuchar = servidor.escucharAvisos(perfil, lista => { avisos = lista; actualizarCampana(); });
@@ -1014,23 +1365,26 @@ app.addEventListener('submit', ev => {
     };
     // Si ya había un registro de esa fecha para ese ejercicio, se reemplaza
     datos.registros = datos.registros.filter(r => !(r.alumnaId === perfil.alumnaId && r.nombre === ej.nombre && r.fecha === fecha));
+    // ¿Es un récord? (supera el mejor peso anterior de ese ejercicio)
+    const anteriores = datos.registros.filter(r => r.alumnaId === perfil.alumnaId && r.nombre === ej.nombre);
+    const esRecord = registro.peso > 0 && anteriores.length > 0 && registro.peso > Math.max(...anteriores.map(r => r.peso));
     datos.registros.push(registro);
     ui.registrando = null;
-    mostrarAviso('Registro guardado. Sumaste progreso');
+    mostrarAviso(esRecord ? `🏆 ¡Nuevo récord en ${ej.nombre}: ${formatoPeso(registro.peso)}!` : 'Registro guardado. Sumaste progreso');
     servidor.guardarRegistro(perfil.alumnaId, registro).catch(mostrarError);
     servidor.avisarAlProfe(perfil.alumnaId,
-      `${perfil.nombre} registró ${ej.nombre} (${fechaLarga(fecha)}): ${registro.series} × ${registro.reps} con ${formatoPeso(registro.peso)}.`)
+      `${esRecord ? '🏆 Nuevo récord: ' : ''}${perfil.nombre} registró ${ej.nombre} (${fechaLarga(fecha)}): ${registro.series} × ${registro.reps} con ${formatoPeso(registro.peso)}.`, perfil.entrenadorUid)
       .catch(e => console.error(e));
   }
 
   if (f.dataset.form === 'encuesta') {
     if (!ui.estrellas) return;
-    const respuesta = { area: f.dataset.area, autor: perfil.nombre, alumnaId: perfil.alumnaId, fecha: fechaISO(), puntaje: ui.estrellas, comentario: String(campos.get('comentario') || '').trim().slice(0, 300) };
+    const respuesta = { area: f.dataset.area, autor: perfil.nombre, alumnaId: perfil.alumnaId, entrenadorUid: perfil.entrenadorUid || '', fecha: fechaISO(), puntaje: ui.estrellas, comentario: String(campos.get('comentario') || '').trim().slice(0, 300) };
     datos.encuestas.push(respuesta);
     ui.estrellas = 0; ui.comentario = '';
     mostrarAviso('Gracias. Tu respuesta ya llegó');
     servidor.agregarEncuesta(respuesta).catch(mostrarError);
-    servidor.avisarAlProfe(perfil.alumnaId, `${perfil.nombre} respondió la encuesta: ${'★'.repeat(respuesta.puntaje)}.`).catch(e => console.error(e));
+    servidor.avisarAlProfe(perfil.alumnaId, `${perfil.nombre} respondió la encuesta: ${'★'.repeat(respuesta.puntaje)}.`, perfil.entrenadorUid).catch(e => console.error(e));
   }
 
   if (f.dataset.form === 'nueva-alumna') {
@@ -1041,9 +1395,9 @@ app.addEventListener('submit', ev => {
     const disciplina = String(campos.get('disciplina'));
     ui.ocupado = true; ui.errorAlumna = ''; dibujar();
     // Se crea con un código de primer ingreso; el alumno después crea su contraseña
-    servidor.crearAlumna({ nombre, dni, disciplina })
+    servidor.crearAlumna({ nombre, dni, disciplina }, entrenadorActual())
       .then(({ id, codigo }) => {
-        datos.alumnas.push({ id, nombre, dni, disciplina, debeCambiarClave: true, codigoInicial: codigo });
+        datos.alumnas.push({ id, nombre, dni, disciplina, debeCambiarClave: true, codigoInicial: codigo, ...entrenadorEnFicha() });
         datos.alumnas.sort((a, b) => a.nombre.localeCompare(b.nombre));
         datos.rutinas[id] = {};
         ui.nuevaAlumna = false;
@@ -1053,6 +1407,24 @@ app.addEventListener('submit', ev => {
         mostrarAviso('Alumno creado');
       })
       .catch(e => { ui.errorAlumna = mensajeError(e); })
+      .finally(() => { ui.ocupado = false; dibujar(); });
+  }
+
+  if (f.dataset.form === 'nuevo-entrenador') {
+    const nombre = String(campos.get('nombre') || '').trim();
+    const dni = String(campos.get('dni') || '').replace(/\D/g, '');
+    if (!nombre || !dni) return;
+    if (datos.entrenadores.some(e => e.dni === dni)) { ui.errorEntrenador = 'Ya hay un entrenador con ese DNI.'; dibujar(); return; }
+    ui.ocupado = true; ui.errorEntrenador = ''; dibujar();
+    servidor.crearEntrenador({ nombre, dni })
+      .then(entrenador => {
+        datos.entrenadores.push(entrenador);
+        datos.entrenadores.sort((a, b) => a.nombre.localeCompare(b.nombre));
+        ui.nuevoEntrenador = false; ui.entrenadorId = entrenador.uid; // abre su ficha con el código
+        window.scrollTo(0, 0);
+        mostrarAviso('Entrenador creado');
+      })
+      .catch(e => { ui.errorEntrenador = mensajeError(e); })
       .finally(() => { ui.ocupado = false; dibujar(); });
   }
 
@@ -1067,7 +1439,7 @@ app.addEventListener('submit', ev => {
     // (solo el profesor la guarda en la lista compartida; el alumno lo suma a su rutina)
     if (perfil.rol === 'profesor' && !ejerciciosDe(alumna.disciplina, ui.musculo).some(e => e[0].toLowerCase() === nombre.toLowerCase())) {
       lista.push({ nombre, peso });
-      servidor.guardarEjerciciosPropios(datos.ejerciciosPropios).catch(mostrarError);
+      servidor.guardarEjerciciosPropios(datos.ejerciciosPropios, perfil.uid).catch(mostrarError);
     }
     const cambiado = ponerEjercicio(alumna, itemRutina(alumna.disciplina, nombre, 3, 10, peso, 60, ui.musculo));
     ui.creando = false;
@@ -1107,6 +1479,10 @@ app.addEventListener('submit', ev => {
   }
 });
 
+// Quién queda como entrenador de un alumno nuevo: quien lo crea (la administradora = vacío)
+function entrenadorActual() { return { uid: perfil.uid || '', nombre: perfil.esAdmin ? '' : perfil.nombre }; }
+function entrenadorEnFicha() { const e = entrenadorActual(); return { entrenadorUid: e.uid, entrenadorNombre: e.nombre }; }
+
 // Carga en el servidor las alumnas de ejemplo (cada una con su código de primer ingreso)
 async function cargarEjemplo() {
   if (!confirm('¿Cargar 3 alumnos de ejemplo (datos inventados) en el servidor?')) return;
@@ -1116,9 +1492,9 @@ async function cargarEjemplo() {
       if (datos.alumnas.some(a => a.dni === ejemplo.dni)) continue;
       const { registros = [], ...ficha } = ejemplo;
       const { nombre, dni, disciplina, ...extra } = ficha;
-      const { id, codigo } = await servidor.crearAlumna({ nombre, dni, disciplina }, extra);
+      const { id, codigo } = await servidor.crearAlumna({ nombre, dni, disciplina }, entrenadorActual(), extra);
       for (const registro of registros) await servidor.guardarRegistro(id, registro);
-      datos.alumnas.push({ id, nombre, dni, disciplina, debeCambiarClave: true, codigoInicial: codigo });
+      datos.alumnas.push({ id, nombre, dni, disciplina, debeCambiarClave: true, codigoInicial: codigo, ...entrenadorEnFicha() });
       datos.rutinas[id] = extra.rutinas || {};
       if (extra.notaProgreso) datos.notasProgreso[id] = extra.notaProgreso;
       if (extra.evaluacion) datos.evaluaciones[id] = extra.evaluacion;
@@ -1139,7 +1515,7 @@ servidor.alCambiarSesion(async usuario => {
     const resultado = await servidor.cargar(usuario);
     datos = resultado.datos;
     perfil = resultado.perfil;
-    ui.pestana = PESTANAS[perfil.rol][0][0];
+    ui.pestana = pestanasDe(perfil)[0][0];
     ui.alumnaId = null; ui.dia = new Date().getDay(); ui.fecha = fechaISO(); ui.estrellas = 0; ui.comentario = ''; ui.errorIngreso = '';
     // La campanita se actualiza sola mientras la app está abierta
     if (!perfil.debeCambiarClave) dejarDeEscuchar = servidor.escucharAvisos(perfil, lista => { avisos = lista; actualizarCampana(); });
