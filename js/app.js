@@ -40,6 +40,10 @@ const ui = {
   reemplazando: null,       // índice del ejercicio que se está cambiando por otro
   verAvisos: false,         // está abierta la lista de notificaciones
   importacion: null,        // planilla de Excel leída, esperando que el profesor la confirme
+  tipoIngreso: 'alumno',    // en la pantalla de ingreso: 'alumno' o 'entrenador'
+  entrenadorId: null,       // entrenador elegido por la administradora
+  nuevoEntrenador: false,   // formulario de entrenador nuevo abierto
+  errorEntrenador: '',      // mensaje si no se pudo crear un entrenador
   ejercicioGrafico: null,   // ejercicio elegido en Progreso
   estrellas: 0,             // puntaje elegido en la encuesta
   comentario: ''            // comentario que se está escribiendo en la encuesta
@@ -100,7 +104,7 @@ function enviarAviso(alumnaId, texto) {
   const clave = alumnaId + texto;
   if (Date.now() - (ultimosAvisos[clave] || 0) < 10 * 60e3) return;
   ultimosAvisos[clave] = Date.now();
-  const envio = perfil.rol === 'profesor' ? servidor.avisarAlAlumno(alumnaId, texto) : servidor.avisarAlProfe(alumnaId, texto);
+  const envio = perfil.rol === 'profesor' ? servidor.avisarAlAlumno(alumnaId, texto) : servidor.avisarAlProfe(alumnaId, texto, perfil.entrenadorUid);
   envio.catch(e => console.error(e));
 }
 
@@ -113,6 +117,8 @@ function mensajeError(e) {
   if (codigo === 'auth/network-request-failed' || codigo === 'unavailable') return 'No hay conexión a internet. Revisala e intentá de nuevo.';
   if (codigo === 'rekover/sin-ficha') return 'Tu cuenta no tiene una ficha asignada. Consultá con tu profe.';
   if (codigo === 'rekover/dni-repetido') return 'Ya hay un alumno con ese DNI.';
+  if (codigo === 'rekover/dni-repetido-entrenador') return 'Ya hay un entrenador con ese DNI.';
+  if (codigo === 'rekover/sin-ficha') return 'No encontramos tu ficha. Fijate de haber elegido bien "Soy alumno" o "Soy entrenador", o consultá con tu profe.';
   if (codigo === 'auth/requires-recent-login') return 'Por seguridad, salí y volvé a entrar con tu código para crear la contraseña.';
   if (codigo === 'permission-denied') return 'No tenés permiso para hacer esto.';
   if (codigo === 'rekover/sin-libreria-excel') return 'No se pudo abrir el lector de Excel. Revisá la conexión a internet e intentá de nuevo.';
@@ -259,15 +265,17 @@ function pantallaAvisos() {
     }).join('') || '<div class="tarjeta vacio">Todavía no tenés notificaciones.</div>'}`;
 }
 
-// Pestañas de abajo: cada perfil ve solo las suyas
+// Pestañas de abajo: cada perfil ve solo las suyas (la administradora, además, Entrenadores)
 const PESTANAS = {
   alumna:   [['hoy', 'Rutina'], ['progreso', 'Progreso'], ['encuesta', 'Encuesta']],
   profesor: [['alumnas', 'Alumnos'], ['encuestas', 'Encuestas'], ['kinesio', 'Kinesio']],
+  admin:    [['alumnas', 'Alumnos'], ['entrenadores', 'Entrenadores'], ['encuestas', 'Encuestas'], ['kinesio', 'Kinesio']],
   paciente: [['turnos', 'Turnos']]
 };
+function pestanasDe(p) { return PESTANAS[p.esAdmin ? 'admin' : p.rol]; }
 
 function menuInferior() {
-  const lista = PESTANAS[perfil.rol];
+  const lista = pestanasDe(perfil);
   if (lista.length < 2) return '';
   return `<nav class="menu-inferior">${lista.map(([id, texto]) =>
     `<button class="${ui.pestana === id ? 'activa' : ''}" data-accion="pestana" data-valor="${id}">${texto}</button>`).join('')}</nav>`;
@@ -280,27 +288,31 @@ function pantallaIngreso() {
     ${logo(false)}
     <p class="ingreso-bajada">Sports Recovery</p>
     <h1>Ingresar</h1>
+    <div class="tipo-ingreso">
+      <button class="${ui.tipoIngreso === 'alumno' ? 'activa' : ''}" data-accion="tipo-ingreso" data-valor="alumno">Soy alumno</button>
+      <button class="${ui.tipoIngreso === 'entrenador' ? 'activa' : ''}" data-accion="tipo-ingreso" data-valor="entrenador">Soy entrenador</button>
+    </div>
     <form class="form-ingreso" data-form="ingreso" autocomplete="on">
-      <label class="campo">Usuario o DNI
-        <input name="usuario" required autocomplete="username" autocapitalize="none" placeholder="Tu usuario o tu DNI sin puntos">
+      <label class="campo">${ui.tipoIngreso === 'entrenador' ? 'Usuario o DNI' : 'DNI'}
+        <input name="usuario" required autocomplete="username" autocapitalize="none" ${ui.tipoIngreso === 'alumno' ? 'inputmode="numeric"' : ''}
+          placeholder="${ui.tipoIngreso === 'entrenador' ? 'Tu DNI sin puntos (o tu usuario)' : 'Tu DNI sin puntos'}">
       </label>
       <label class="campo">Contraseña
         <input name="clave" type="password" autocomplete="current-password" placeholder="Tu contraseña">
       </label>
-      <p class="nota-chica">¿Es tu primera vez? Escribí tu DNI y, como contraseña, el código de 8 números que te dio tu profe.</p>
+      <p class="nota-chica">¿Es tu primera vez? Escribí tu DNI y, como contraseña, el código de 8 números que te ${ui.tipoIngreso === 'entrenador' ? 'dio la administración del gimnasio' : 'dio tu entrenador'}.</p>
       ${ui.errorIngreso ? `<p class="error">${esc(ui.errorIngreso)}</p>` : ''}
       <button type="submit" class="boton ancho" ${ui.ocupado ? 'disabled' : ''}>${ui.ocupado ? 'Ingresando…' : 'Ingresar'}</button>
     </form>
   </section>`;
 }
 
-// Primer ingreso de una alumna: crea su propia contraseña
+// Primer ingreso de un alumno o entrenador: crea su propia contraseña
 function pantallaCrearClave() {
-  const alumna = alumnaPorId(perfil.alumnaId);
   return `<section class="ingreso">
     ${logo(false)}
     <p class="ingreso-bajada">Sports Recovery</p>
-    <h1>Hola, ${esc(alumna.nombre.split(' ')[0])}</h1>
+    <h1>Hola, ${esc(perfil.nombre.split(' ')[0])}</h1>
     <p class="suave">Es tu primer ingreso. Creá tu contraseña: desde ahora la vas a usar junto con tu DNI y el código ya no va a servir.</p>
     <form class="form-ingreso" data-form="crear-clave">
       <label class="campo">Nueva contraseña
@@ -693,6 +705,7 @@ function tarjetaEncuesta(e) {
 /* ---------- Profesor ---------- */
 
 function pantallaProfesor() {
+  if (ui.pestana === 'entrenadores' && perfil.esAdmin) return ui.entrenadorId ? fichaEntrenador() : listaEntrenadores();
   if (ui.pestana === 'encuestas') return profesorEncuestas();
   if (ui.pestana === 'kinesio') return proximamente('Kinesiología', 'Acá vas a agregar turnos y registrar cada sesión: evaluación, protocolo y resultado.');
   return ui.alumnaId ? profesorFichaAlumna() : profesorAlumnas();
@@ -715,13 +728,13 @@ function profesorAlumnas() {
       const dias = Object.keys(datos.rutinas[a.id] || {}).filter(d => datos.rutinas[a.id][d].length).length;
       return `<button class="tarjeta fila-alumna" data-accion="elegir-alumna" data-valor="${a.id}">
         <span class="perfil-inicial">${esc(a.nombre[0])}</span>
-        <span class="crece"><strong>${esc(a.nombre)}</strong><small>${esc(a.disciplina)} · ${dias} ${dias === 1 ? 'día' : 'días'} con rutina</small>
+        <span class="crece"><strong>${esc(a.nombre)}</strong><small>${esc(a.disciplina)} · ${dias} ${dias === 1 ? 'día' : 'días'} con rutina${perfil.esAdmin ? ` · ${a.entrenadorUid ? 'Entrenador: ' + esc(a.entrenadorNombre) : 'Tuyo'}` : ''}</small>
           ${a.debeCambiarClave ? '<em class="etiqueta-propio">Falta su primer ingreso</em>' : ''}</span>
         <span class="flecha">›</span>
       </button>`;
     }).join('') || (datos.alumnas.length ? '<div class="tarjeta vacio">No hay alumnos en esta disciplina.</div>'
-      : `<div class="tarjeta vacio"><p>Todavía no cargaste alumnos.</p>
-          <button class="boton secundario" data-accion="cargar-ejemplo" ${ui.ocupado ? 'disabled' : ''}>${ui.ocupado ? 'Cargando…' : 'Cargar 3 alumnos de ejemplo para probar'}</button></div>`)}
+      : `<div class="tarjeta vacio"><p>Todavía no cargaste alumnos. Tocá "+ Nuevo alumno" para crear el primero.</p>
+          ${perfil.esAdmin ? `<button class="boton secundario" data-accion="cargar-ejemplo" ${ui.ocupado ? 'disabled' : ''}>${ui.ocupado ? 'Cargando…' : 'Cargar 3 alumnos de ejemplo para probar'}</button>` : ''}</div>`)}
     ${ui.nuevaAlumna ? `
       <form class="tarjeta" data-form="nueva-alumna">
         <h3>Nuevo alumno</h3>
@@ -741,13 +754,68 @@ function profesorAlumnas() {
     : '<button class="boton secundario ancho" data-accion="abrir-nueva-alumna">+ Nuevo alumno</button>'}`;
 }
 
+/* ---------- Entrenadores (solo la administradora) ---------- */
+
+function listaEntrenadores() {
+  return `<h1>Entrenadores</h1>
+    <p class="suave">Cada entrenador ve y maneja solo sus alumnos. Vos ves a todos.</p>
+    ${datos.entrenadores.map(e => {
+      const cantidad = datos.alumnas.filter(a => a.entrenadorUid === e.uid).length;
+      return `<button class="tarjeta fila-alumna" data-accion="elegir-entrenador" data-valor="${esc(e.uid)}">
+        <span class="perfil-inicial">${esc(e.nombre[0])}</span>
+        <span class="crece"><strong>${esc(e.nombre)}</strong><small>DNI ${esc(e.dni)} · ${cantidad} ${cantidad === 1 ? 'alumno' : 'alumnos'}</small>
+          ${e.debeCambiarClave ? '<em class="etiqueta-propio">Falta su primer ingreso</em>' : ''}</span>
+        <span class="flecha">›</span>
+      </button>`;
+    }).join('') || '<div class="tarjeta vacio">Todavía no hay entrenadores. Creá el primero con el botón de abajo.</div>'}
+    ${ui.nuevoEntrenador ? `
+      <form class="tarjeta" data-form="nuevo-entrenador">
+        <h3>Nuevo entrenador</h3>
+        <label class="campo">Nombre y apellido<input name="nombre" required maxlength="40" placeholder="Ej.: Juan Pérez"></label>
+        <label class="campo">DNI (sin puntos) — es su usuario para ingresar
+          <input name="dni" required inputmode="numeric" pattern="[0-9]{7,8}" maxlength="8" placeholder="Ej.: 28123456"></label>
+        <p class="nota-chica">La app genera un código de primer ingreso. Entra eligiendo "Soy entrenador", con su DNI y ese código, y crea su propia contraseña.</p>
+        ${ui.errorEntrenador ? `<p class="error">${esc(ui.errorEntrenador)}</p>` : ''}
+        <div class="fila-botones">
+          <button type="button" class="boton secundario" data-accion="cerrar-nuevo-entrenador">Cancelar</button>
+          <button type="submit" class="boton" ${ui.ocupado ? 'disabled' : ''}>${ui.ocupado ? 'Creando…' : 'Agregar'}</button>
+        </div>
+      </form>`
+    : '<button class="boton secundario ancho" data-accion="abrir-nuevo-entrenador">+ Nuevo entrenador</button>'}`;
+}
+
+function fichaEntrenador() {
+  const e = datos.entrenadores.find(x => x.uid === ui.entrenadorId);
+  if (!e) { ui.entrenadorId = null; return listaEntrenadores(); }
+  const suyos = datos.alumnas.filter(a => a.entrenadorUid === e.uid);
+  return `<button class="boton-texto volver" data-accion="volver-entrenadores">‹ Entrenadores</button>
+    <h1>${esc(e.nombre)}</h1>
+    <p class="suave">Entrenador · DNI ${esc(e.dni)}</p>
+    ${e.debeCambiarClave ? `
+      <div class="tarjeta codigo-ingreso">
+        <small>Código de primer ingreso</small>
+        <b>${esc(e.codigoInicial)}</b>
+        <p>Pasáselo a ${esc(e.nombre.split(' ')[0])}: entra eligiendo "Soy entrenador", con su DNI y este código, y crea su propia contraseña.</p>
+      </div>` : ''}
+    <div class="cuenta">
+      <span>${e.debeCambiarClave ? 'Todavía no creó su contraseña.' : 'Ya creó su contraseña.'}</span>
+      <button class="boton-texto" data-accion="restablecer-entrenador" ${ui.ocupado ? 'disabled' : ''}>${e.debeCambiarClave ? 'Generar otro código' : 'Restablecer'}</button>
+    </div>
+    <h2>Sus alumnos</h2>
+    ${suyos.map(a => `<button class="tarjeta fila-alumna" data-accion="ir-alumno" data-valor="${a.id}">
+        <span class="perfil-inicial">${esc(a.nombre[0])}</span>
+        <span class="crece"><strong>${esc(a.nombre)}</strong><small>${esc(a.disciplina)}</small></span>
+        <span class="flecha">›</span>
+      </button>`).join('') || '<div class="tarjeta vacio">Todavía no creó alumnos.</div>'}`;
+}
+
 // Ficha de una alumna: datos de su cuenta y pestañas Rutina / Evaluación inicial
 function profesorFichaAlumna() {
   const alumna = alumnaPorId(ui.alumnaId);
   const secciones = [['rutina', 'Rutina'], ['evaluacion', 'Evaluación inicial']];
   return `<button class="boton-texto volver" data-accion="volver">‹ Alumnos</button>
     <h1>${esc(alumna.nombre)}</h1>
-    <p class="suave">${esc(alumna.disciplina)} · DNI ${esc(alumna.dni)}</p>
+    <p class="suave">${esc(alumna.disciplina)} · DNI ${esc(alumna.dni)}${perfil.esAdmin && alumna.entrenadorUid ? ` · Entrenador: ${esc(alumna.entrenadorNombre)}` : ''}</p>
     ${alumna.debeCambiarClave ? `
       <div class="tarjeta codigo-ingreso">
         <small>Código de primer ingreso</small>
@@ -1053,6 +1121,27 @@ app.addEventListener('click', ev => {
       servidor.salir(); // al cerrar la sesión, alCambiarSesion vuelve a la pantalla de ingreso
       return;
     case 'cargar-ejemplo': cargarEjemplo(); return;
+    case 'tipo-ingreso': ui.tipoIngreso = v; ui.errorIngreso = ''; break;
+    case 'elegir-entrenador': ui.entrenadorId = v; window.scrollTo(0, 0); break;
+    case 'volver-entrenadores': ui.entrenadorId = null; break;
+    case 'abrir-nuevo-entrenador': ui.nuevoEntrenador = true; ui.errorEntrenador = ''; break;
+    case 'cerrar-nuevo-entrenador': ui.nuevoEntrenador = false; break;
+    case 'restablecer-entrenador': {
+      const e = datos.entrenadores.find(x => x.uid === ui.entrenadorId);
+      if (!confirm(`¿Generar un código nuevo para ${e.nombre}? Su contraseña o código actual dejan de servir, y con el nuevo código crea otra contraseña. Sus alumnos siguen siendo suyos.`)) return;
+      ui.ocupado = true; dibujar();
+      servidor.restablecerEntrenador(e)
+        .then(({ uid, codigo }) => {
+          const viejo = e.uid;
+          Object.assign(e, { uid, codigoInicial: codigo, debeCambiarClave: true });
+          datos.alumnas.filter(a => a.entrenadorUid === viejo).forEach(a => { a.entrenadorUid = uid; });
+          ui.entrenadorId = uid;
+          mostrarAviso('Código nuevo generado');
+        })
+        .catch(mostrarError)
+        .finally(() => { ui.ocupado = false; dibujar(); });
+      return;
+    }
     case 'avisos': {
       ui.verAvisos = !ui.verAvisos;
       // Al abrir la lista, las notificaciones quedan como leídas
@@ -1065,6 +1154,7 @@ app.addEventListener('click', ev => {
       ui.agregando = false; ui.creando = false; ui.modoRutina = 'semanal'; ui.dia = new Date().getDay(); ui.fechaRutina = fechaISO();
       break;
     case 'pestana':
+      ui.entrenadorId = null; ui.nuevoEntrenador = false;
       ui.verAvisos = false; ui.editando = false; ui.eligiendoAlcance = false; ui.reemplazando = null;
       ui.pestana = v; ui.alumnaId = null; ui.agregando = false; ui.creando = false; ui.registrando = null;
       ui.dia = new Date().getDay(); ui.fecha = fechaISO(); ui.estrellas = 0; ui.comentario = '';
@@ -1239,7 +1329,7 @@ app.addEventListener('submit', ev => {
   if (f.dataset.form === 'ingreso') {
     ui.errorIngreso = ''; ui.ocupado = true; dibujar();
     // Si los datos coinciden, alCambiarSesion se encarga de traer los datos y mostrar la app
-    servidor.ingresar(String(campos.get('usuario')), String(campos.get('clave')))
+    servidor.ingresar(String(campos.get('usuario')), String(campos.get('clave')), ui.tipoIngreso)
       .catch(e => { ui.errorIngreso = mensajeError(e); })
       .finally(() => { ui.ocupado = false; dibujar(); });
   }
@@ -1251,7 +1341,7 @@ app.addEventListener('submit', ev => {
     else if (clave !== campos.get('repetir')) ui.errorIngreso = 'Las dos contraseñas no son iguales. Escribilas de nuevo.';
     else {
       ui.ocupado = true; dibujar();
-      servidor.cambiarClave(perfil.alumnaId, clave)
+      servidor.cambiarClave(perfil, clave)
         .then(() => {
           perfil.debeCambiarClave = false;
           dejarDeEscuchar = servidor.escucharAvisos(perfil, lista => { avisos = lista; actualizarCampana(); });
@@ -1283,18 +1373,18 @@ app.addEventListener('submit', ev => {
     mostrarAviso(esRecord ? `🏆 ¡Nuevo récord en ${ej.nombre}: ${formatoPeso(registro.peso)}!` : 'Registro guardado. Sumaste progreso');
     servidor.guardarRegistro(perfil.alumnaId, registro).catch(mostrarError);
     servidor.avisarAlProfe(perfil.alumnaId,
-      `${esRecord ? '🏆 Nuevo récord: ' : ''}${perfil.nombre} registró ${ej.nombre} (${fechaLarga(fecha)}): ${registro.series} × ${registro.reps} con ${formatoPeso(registro.peso)}.`)
+      `${esRecord ? '🏆 Nuevo récord: ' : ''}${perfil.nombre} registró ${ej.nombre} (${fechaLarga(fecha)}): ${registro.series} × ${registro.reps} con ${formatoPeso(registro.peso)}.`, perfil.entrenadorUid)
       .catch(e => console.error(e));
   }
 
   if (f.dataset.form === 'encuesta') {
     if (!ui.estrellas) return;
-    const respuesta = { area: f.dataset.area, autor: perfil.nombre, alumnaId: perfil.alumnaId, fecha: fechaISO(), puntaje: ui.estrellas, comentario: String(campos.get('comentario') || '').trim().slice(0, 300) };
+    const respuesta = { area: f.dataset.area, autor: perfil.nombre, alumnaId: perfil.alumnaId, entrenadorUid: perfil.entrenadorUid || '', fecha: fechaISO(), puntaje: ui.estrellas, comentario: String(campos.get('comentario') || '').trim().slice(0, 300) };
     datos.encuestas.push(respuesta);
     ui.estrellas = 0; ui.comentario = '';
     mostrarAviso('Gracias. Tu respuesta ya llegó');
     servidor.agregarEncuesta(respuesta).catch(mostrarError);
-    servidor.avisarAlProfe(perfil.alumnaId, `${perfil.nombre} respondió la encuesta: ${'★'.repeat(respuesta.puntaje)}.`).catch(e => console.error(e));
+    servidor.avisarAlProfe(perfil.alumnaId, `${perfil.nombre} respondió la encuesta: ${'★'.repeat(respuesta.puntaje)}.`, perfil.entrenadorUid).catch(e => console.error(e));
   }
 
   if (f.dataset.form === 'nueva-alumna') {
@@ -1305,9 +1395,9 @@ app.addEventListener('submit', ev => {
     const disciplina = String(campos.get('disciplina'));
     ui.ocupado = true; ui.errorAlumna = ''; dibujar();
     // Se crea con un código de primer ingreso; el alumno después crea su contraseña
-    servidor.crearAlumna({ nombre, dni, disciplina })
+    servidor.crearAlumna({ nombre, dni, disciplina }, entrenadorActual())
       .then(({ id, codigo }) => {
-        datos.alumnas.push({ id, nombre, dni, disciplina, debeCambiarClave: true, codigoInicial: codigo });
+        datos.alumnas.push({ id, nombre, dni, disciplina, debeCambiarClave: true, codigoInicial: codigo, ...entrenadorEnFicha() });
         datos.alumnas.sort((a, b) => a.nombre.localeCompare(b.nombre));
         datos.rutinas[id] = {};
         ui.nuevaAlumna = false;
@@ -1317,6 +1407,24 @@ app.addEventListener('submit', ev => {
         mostrarAviso('Alumno creado');
       })
       .catch(e => { ui.errorAlumna = mensajeError(e); })
+      .finally(() => { ui.ocupado = false; dibujar(); });
+  }
+
+  if (f.dataset.form === 'nuevo-entrenador') {
+    const nombre = String(campos.get('nombre') || '').trim();
+    const dni = String(campos.get('dni') || '').replace(/\D/g, '');
+    if (!nombre || !dni) return;
+    if (datos.entrenadores.some(e => e.dni === dni)) { ui.errorEntrenador = 'Ya hay un entrenador con ese DNI.'; dibujar(); return; }
+    ui.ocupado = true; ui.errorEntrenador = ''; dibujar();
+    servidor.crearEntrenador({ nombre, dni })
+      .then(entrenador => {
+        datos.entrenadores.push(entrenador);
+        datos.entrenadores.sort((a, b) => a.nombre.localeCompare(b.nombre));
+        ui.nuevoEntrenador = false; ui.entrenadorId = entrenador.uid; // abre su ficha con el código
+        window.scrollTo(0, 0);
+        mostrarAviso('Entrenador creado');
+      })
+      .catch(e => { ui.errorEntrenador = mensajeError(e); })
       .finally(() => { ui.ocupado = false; dibujar(); });
   }
 
@@ -1331,7 +1439,7 @@ app.addEventListener('submit', ev => {
     // (solo el profesor la guarda en la lista compartida; el alumno lo suma a su rutina)
     if (perfil.rol === 'profesor' && !ejerciciosDe(alumna.disciplina, ui.musculo).some(e => e[0].toLowerCase() === nombre.toLowerCase())) {
       lista.push({ nombre, peso });
-      servidor.guardarEjerciciosPropios(datos.ejerciciosPropios).catch(mostrarError);
+      servidor.guardarEjerciciosPropios(datos.ejerciciosPropios, perfil.uid).catch(mostrarError);
     }
     const cambiado = ponerEjercicio(alumna, itemRutina(alumna.disciplina, nombre, 3, 10, peso, 60, ui.musculo));
     ui.creando = false;
@@ -1371,6 +1479,10 @@ app.addEventListener('submit', ev => {
   }
 });
 
+// Quién queda como entrenador de un alumno nuevo: quien lo crea (la administradora = vacío)
+function entrenadorActual() { return { uid: perfil.uid || '', nombre: perfil.esAdmin ? '' : perfil.nombre }; }
+function entrenadorEnFicha() { const e = entrenadorActual(); return { entrenadorUid: e.uid, entrenadorNombre: e.nombre }; }
+
 // Carga en el servidor las alumnas de ejemplo (cada una con su código de primer ingreso)
 async function cargarEjemplo() {
   if (!confirm('¿Cargar 3 alumnos de ejemplo (datos inventados) en el servidor?')) return;
@@ -1380,9 +1492,9 @@ async function cargarEjemplo() {
       if (datos.alumnas.some(a => a.dni === ejemplo.dni)) continue;
       const { registros = [], ...ficha } = ejemplo;
       const { nombre, dni, disciplina, ...extra } = ficha;
-      const { id, codigo } = await servidor.crearAlumna({ nombre, dni, disciplina }, extra);
+      const { id, codigo } = await servidor.crearAlumna({ nombre, dni, disciplina }, entrenadorActual(), extra);
       for (const registro of registros) await servidor.guardarRegistro(id, registro);
-      datos.alumnas.push({ id, nombre, dni, disciplina, debeCambiarClave: true, codigoInicial: codigo });
+      datos.alumnas.push({ id, nombre, dni, disciplina, debeCambiarClave: true, codigoInicial: codigo, ...entrenadorEnFicha() });
       datos.rutinas[id] = extra.rutinas || {};
       if (extra.notaProgreso) datos.notasProgreso[id] = extra.notaProgreso;
       if (extra.evaluacion) datos.evaluaciones[id] = extra.evaluacion;
@@ -1403,7 +1515,7 @@ servidor.alCambiarSesion(async usuario => {
     const resultado = await servidor.cargar(usuario);
     datos = resultado.datos;
     perfil = resultado.perfil;
-    ui.pestana = PESTANAS[perfil.rol][0][0];
+    ui.pestana = pestanasDe(perfil)[0][0];
     ui.alumnaId = null; ui.dia = new Date().getDay(); ui.fecha = fechaISO(); ui.estrellas = 0; ui.comentario = ''; ui.errorIngreso = '';
     // La campanita se actualiza sola mientras la app está abierta
     if (!perfil.debeCambiarClave) dejarDeEscuchar = servidor.escucharAvisos(perfil, lista => { avisos = lista; actualizarCampana(); });

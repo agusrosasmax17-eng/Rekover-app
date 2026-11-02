@@ -13,7 +13,7 @@ La dueña del proyecto **no sabe programar**: explicar siempre todo en **españo
 - Diseño **primero para celular** (mobile first).
 - Los datos se guardan en **Firebase** (plan gratis Spark): ingreso con **Firebase Authentication** (correo y contraseña) y datos en **Cloud Firestore** (São Paulo). La librería se carga desde `https://www.gstatic.com/firebasejs/10.14.1/` (sin instalar nada).
 - Por ahora solo **datos de ejemplo inventados**. **Nada de datos reales** hasta tener el consentimiento de las personas y la consulta legal (Ley 25.326: los datos de salud son sensibles).
-- La seguridad la dan las reglas de `firestore.rules`: si se cambian, hay que pegarlas de nuevo en Firebase → Firestore Database → Reglas → Publicar.
+- La seguridad la dan las reglas de `firestore.rules`: si se cambian, hay que pegarlas de nuevo en Firebase → Firestore Database → Reglas → Publicar. Antes de publicarlas, probarlas con el emulador de Firestore (`@firebase/rules-unit-testing`): hay una prueba de 60 casos (administradora, entrenadores, alumnos, intruso).
 - Nunca poner en el repositorio claves privadas o "cuentas de servicio" de Firebase. La configuración de `js/config.js` es pública y está bien que esté.
 
 ## Marca (respetarla siempre)
@@ -91,19 +91,23 @@ Rekover es **Sports Recovery**. El PDF del manual es confidencial: no subirlo al
 
 ## Cuentas
 
-- **Profesor**: se ingresa con el usuario `profesor`. Por dentro es la cuenta `profesor@rekover.app`, creada a mano en Firebase → Authentication → Users (la contraseña la eligió la dueña). Ese correo está en `js/config.js` y en `firestore.rules`.
-- **Alumnas**: ingresan con su DNI. Por dentro, Firebase les asigna un correo inventado (`DNI.algo@alumnas.rekover.app`) que se busca en `accesos/{dni}`.
+- En la pantalla de ingreso se elige **"Soy alumno"** o **"Soy entrenador"**.
+- **Administradora** (la dueña): usuario `profesor` (cualquiera de las dos opciones). Por dentro es `profesor@rekover.app`, creada a mano en Firebase → Authentication → Users. Ese correo está en `js/config.js` y en `firestore.rules`. Ve **todos** los alumnos, todas las encuestas y tiene la pestaña **Entrenadores**, donde crea a cada entrenador (nombre + DNI → código de primer ingreso) y puede restablecerlo. Los alumnos que crea ella (y los que ya existían) son "suyos" (`entrenadorUid` vacío).
+- **Entrenadores**: entran con "Soy entrenador" + DNI. La primera vez usan el código que les dio la administradora y crean su contraseña. Cada uno ve y maneja **solo sus alumnos** (los que él creó), sus encuestas, sus avisos y sus ejercicios propios. Por dentro: correo inventado `DNI.algo@entrenadores.rekover.app`, buscado en `accesosEntrenadores/{dni}`. "Restablecer" crea una cuenta nueva y le pasa sus alumnos, encuestas y ejercicios.
+- **Alumnos**: entran con "Soy alumno" + DNI. Los crea su entrenador (o la administradora) con código de primer ingreso. Por dentro: `DNI.algo@alumnas.rekover.app`, buscado en `accesos/{dni}`.
 - **Paciente**: todavía no tiene cuenta (Kinesiología es el próximo paso).
 
 ## Cómo están guardados los datos (Firestore)
 
-- `accesos/{dni}` → qué cuenta usa cada DNI.
-- `alumnas/{id}` → nombre, DNI, disciplina, cuenta (`uid`), código de primer ingreso, `rutinas` (semanal: clave 0–6 = domingo–sábado), `cambios` (rutinas especiales por fecha `AAAA-MM-DD`), evaluación inicial y mensaje del profe.
+- `accesos/{dni}` → qué cuenta usa cada DNI de alumno (y de qué entrenador es).
+- `accesosEntrenadores/{dni}` → qué cuenta usa cada DNI de entrenador.
+- `entrenadores/{uid}` → nombre, DNI y código de primer ingreso de cada entrenador; `entrenadores/{uid}/avisos` → sus notificaciones.
+- `alumnas/{id}` → nombre, DNI, disciplina, cuenta (`uid`), entrenador (`entrenadorUid`, `entrenadorNombre`; vacío = de la administradora), código de primer ingreso, `rutinas` (semanal: clave 0–6 = domingo–sábado), `cambios` (rutinas especiales por fecha `AAAA-MM-DD`), evaluación inicial y mensaje del profe.
 - `alumnas/{id}/registros/{fecha_ejercicio}` → lo que registró la alumna.
 - `alumnas/{id}/avisos/{id}` → notificaciones para el alumno (las crea el profesor).
-- `avisosProfe/{id}` → notificaciones para el profesor (las crean los alumnos).
-- `encuestas/{id}` → respuestas de la encuesta.
-- `config/ejercicios` → ejercicios propios del profesor.
+- `avisosProfe/{id}` → notificaciones para la administradora (de sus propios alumnos).
+- `encuestas/{id}` → respuestas de la encuesta (con `entrenadorUid` del alumno).
+- `config/ejercicios` → ejercicios propios de la administradora; `config/ejercicios_{uid}` → los de cada entrenador.
 
 ## Cómo está organizado el código
 

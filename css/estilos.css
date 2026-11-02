@@ -507,3 +507,15 @@ input[type="date"] { color-scheme: dark; } /* calendario e ícono en colores osc
 .opciones-carga { display: grid; gap: 8px; margin: 10px 0 14px; }
 .opcion.elegida { border-color: var(--azul); background: rgba(74, 179, 244, 0.15); }
 .opcion.elegida small { color: var(--azul); font-size: 18px; }
+
+/* ---------- Ingreso: Soy alumno / Soy entrenador ---------- */
+.tipo-ingreso {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+  width: 100%; margin-top: 12px; padding: 4px;
+  border-radius: 14px; background: rgba(13, 34, 64, 0.6); border: 1px solid var(--borde);
+}
+.tipo-ingreso button {
+  padding: 12px 8px; border: 0; border-radius: 10px;
+  background: transparent; color: var(--texto-suave); font-weight: 700;
+}
+.tipo-ingreso button.activa { background: var(--azul); color: var(--navy); }
