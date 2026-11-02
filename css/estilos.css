@@ -471,3 +471,39 @@ input[type="date"] { color-scheme: dark; } /* calendario e ícono en colores osc
 .alcance { display: grid; gap: 10px; margin-top: 10px; }
 .acciones-ejercicio { display: flex; align-items: center; gap: 4px; flex: none; }
 .aviso-especial .boton { min-height: 40px; padding: 8px 18px; }
+
+/* ---------- Rutina desde Excel ---------- */
+.boton-excel { display: block; text-align: center; margin-top: 12px; cursor: pointer; }
+.boton-excel.deshabilitado { opacity: 0.5; }
+.nota-ejercicio { margin: 4px 0 0; font-size: 13px; color: var(--texto-suave); font-style: italic; }
+.fila-dia { grid-template-columns: 1fr 1fr; align-items: center; color: var(--blanco); }
+.vista-dia h3 { margin-bottom: 10px; }
+.fila-vista { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--borde); font-size: 14px; }
+.vista-datos { white-space: nowrap; color: var(--azul); font-weight: 600; }
+
+/* ---------- Progreso motivador ---------- */
+.saludo {
+  background: linear-gradient(135deg, var(--secundario) 0%, rgba(26, 74, 122, 0.35) 100%);
+  border-color: rgba(74, 179, 244, 0.35);
+}
+.saludo h1 { font-size: 26px; }
+.saludo p { margin: 8px 0 0; }
+.mejora-general { text-align: center; }
+.mejora-general small { color: var(--texto-suave); }
+.mejora-general b { display: block; font-family: var(--titulos); font-size: 44px; line-height: 1.1; margin: 4px 0; }
+.mejora-general p { margin: 0; font-size: 14px; color: var(--texto-suave); }
+.barra-ejercicio {
+  display: grid; gap: 6px; width: 100%;
+  padding: 10px 0; border: 0; border-top: 1px solid var(--borde);
+  background: none; text-align: left; color: var(--blanco); font-size: 14px;
+}
+.barra-ejercicio:first-child { border-top: 0; padding-top: 0; }
+.barra-ejercicio small { color: var(--texto-suave); }
+.barra-ejercicio.activa span:first-child { color: var(--azul); }
+.barra { display: block; height: 8px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.barra i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--azul), var(--oro)); }
+.barra i.baja { background: rgba(255, 255, 255, 0.3); }
+
+.opciones-carga { display: grid; gap: 8px; margin: 10px 0 14px; }
+.opcion.elegida { border-color: var(--azul); background: rgba(74, 179, 244, 0.15); }
+.opcion.elegida small { color: var(--azul); font-size: 18px; }
