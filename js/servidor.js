@@ -15,7 +15,8 @@
    - entrenadores/{uid}/avisos  → notificaciones para ese entrenador
    - alumnas/{id}               → datos del alumno, rutina semanal, cambios por fecha,
                                   evaluación y mensaje del profe
-   - alumnas/{id}/registros     → lo que el alumno registró cada día
+   - alumnas/{id}/registros     → lo que el alumno registró cada día, y además un documento
+                                  "{fecha}_diario" por día con cómo se sintió (carita) y su comentario
    - alumnas/{id}/avisos        → notificaciones para el alumno
    - avisosProfe/{id}           → notificaciones para la administradora (de sus alumnos)
    - encuestas/{id}             → respuestas de la encuesta de satisfacción
@@ -72,7 +73,7 @@ export async function ingresar(usuario, clave, tipo) {
 export function salir() { return signOut(auth); }
 
 function datosVacios() {
-  return { alumnas: [], rutinas: {}, cambios: {}, registros: [], encuestas: [], notasProgreso: {}, ejerciciosPropios: {}, evaluaciones: {}, entrenadores: [] };
+  return { alumnas: [], rutinas: {}, cambios: {}, registros: [], diario: {}, encuestas: [], notasProgreso: {}, ejerciciosPropios: {}, evaluaciones: {}, entrenadores: [] };
 }
 
 function sumarAlumna(datos, d) {
@@ -86,6 +87,22 @@ function sumarAlumna(datos, d) {
   datos.cambios[d.id] = a.cambios || {};
   if (a.notaProgreso) datos.notasProgreso[d.id] = a.notaProgreso;
   if (a.evaluacion) datos.evaluaciones[d.id] = a.evaluacion;
+}
+
+// Separa los registros de ejercicios del diario del día (carita + comentario)
+function leerRegistros(alumnaId, docs) {
+  const registros = [], diario = {};
+  docs.forEach(d => {
+    const r = d.data();
+    if (r.tipo === 'diario') diario[r.fecha] = { sensacion: r.sensacion, comentario: r.comentario || '' };
+    else registros.push({ alumnaId, ...r });
+  });
+  return { registros, diario };
+}
+
+// El entrenador (o la administradora) trae lo que registró un alumno, cuando abre su progreso
+export async function cargarRegistrosDe(alumnaId) {
+  return leerRegistros(alumnaId, (await getDocs(collection(db, 'alumnas', alumnaId, 'registros'))).docs);
 }
 
 const porNombre = (a, b) => a.nombre.localeCompare(b.nombre);
@@ -140,7 +157,9 @@ export async function cargar(usuario) {
     getDoc(doc(db, 'config', idEjercicios(alumna.entrenadorUid)))
   ]);
   if (ejercicios.exists()) datos.ejerciciosPropios = ejercicios.data().lista || {};
-  datos.registros = registros.docs.map(d => ({ alumnaId: ficha.id, ...d.data() }));
+  const leidos = leerRegistros(ficha.id, registros.docs);
+  datos.registros = leidos.registros;
+  datos.diario[ficha.id] = leidos.diario;
   datos.encuestas = encuestas.docs.map(d => d.data()).sort(porFecha);
   return {
     perfil: { rol: 'alumna', nombre: alumna.nombre, alumnaId: alumna.id, entrenadorUid: alumna.entrenadorUid, debeCambiarClave: alumna.debeCambiarClave },
@@ -251,6 +270,11 @@ export function guardarRegistro(alumnaId, registro) {
 }
 
 // La encuesta queda a nombre del entrenador del alumno (vacío = administradora)
+// Cómo se sintió el alumno ese día (carita) y su comentario. Uno por día: si lo cambia, se reemplaza.
+export function guardarDiario(alumnaId, fecha, { sensacion, comentario }) {
+  return setDoc(doc(db, 'alumnas', alumnaId, 'registros', `${fecha}_diario`), { tipo: 'diario', fecha, sensacion, comentario });
+}
+
 export function agregarEncuesta(encuesta) {
   return addDoc(collection(db, 'encuestas'), { ...encuesta, uid: auth.currentUser.uid });
 }
