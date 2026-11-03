@@ -15,12 +15,13 @@
    - entrenadores/{uid}/avisos  → notificaciones para ese entrenador
    - alumnas/{id}               → datos del alumno, rutina semanal, cambios por fecha,
                                   evaluación y mensaje del profe
-   - alumnas/{id}/registros     → lo que el alumno registró cada día
+   - alumnas/{id}/registros     → lo que el alumno registró cada día, y además un documento
+                                  "{fecha}_diario" por día con cómo se sintió (carita) y su comentario
    - alumnas/{id}/avisos        → notificaciones para el alumno
    - avisosProfe/{id}           → notificaciones para la administradora (de sus alumnos)
    - encuestas/{id}             → respuestas de la encuesta de satisfacción
-   - config/ejercicios          → ejercicios propios de la administradora
-   - config/ejercicios_{uid}    → ejercicios propios de cada entrenador
+   - config/ejercicios          → ejercicios propios y videos demostrativos de la administradora
+   - config/ejercicios_{uid}    → ejercicios propios y videos demostrativos de cada entrenador
 
    Por dentro la colección se sigue llamando "alumnas" para no perder los datos
    ya cargados, pero en la app se muestra "alumnos".
@@ -72,7 +73,7 @@ export async function ingresar(usuario, clave, tipo) {
 export function salir() { return signOut(auth); }
 
 function datosVacios() {
-  return { alumnas: [], rutinas: {}, cambios: {}, registros: [], encuestas: [], notasProgreso: {}, ejerciciosPropios: {}, evaluaciones: {}, entrenadores: [] };
+  return { alumnas: [], rutinas: {}, cambios: {}, registros: [], diario: {}, encuestas: [], notasProgreso: {}, ejerciciosPropios: {}, videos: {}, evaluaciones: {}, entrenadores: [] };
 }
 
 function sumarAlumna(datos, d) {
@@ -86,6 +87,22 @@ function sumarAlumna(datos, d) {
   datos.cambios[d.id] = a.cambios || {};
   if (a.notaProgreso) datos.notasProgreso[d.id] = a.notaProgreso;
   if (a.evaluacion) datos.evaluaciones[d.id] = a.evaluacion;
+}
+
+// Separa los registros de ejercicios del diario del día (carita + comentario)
+function leerRegistros(alumnaId, docs) {
+  const registros = [], diario = {};
+  docs.forEach(d => {
+    const r = d.data();
+    if (r.tipo === 'diario') diario[r.fecha] = { sensacion: r.sensacion, comentario: r.comentario || '' };
+    else registros.push({ alumnaId, ...r });
+  });
+  return { registros, diario };
+}
+
+// El entrenador (o la administradora) trae lo que registró un alumno, cuando abre su progreso
+export async function cargarRegistrosDe(alumnaId) {
+  return leerRegistros(alumnaId, (await getDocs(collection(db, 'alumnas', alumnaId, 'registros'))).docs);
 }
 
 const porNombre = (a, b) => a.nombre.localeCompare(b.nombre);
@@ -107,7 +124,7 @@ export async function cargar(usuario) {
     alumnas.forEach(d => sumarAlumna(datos, d));
     datos.alumnas.sort(porNombre);
     datos.encuestas = encuestas.docs.map(d => d.data()).sort(porFecha);
-    if (ejercicios.exists()) datos.ejerciciosPropios = ejercicios.data().lista || {};
+    if (ejercicios.exists()) { datos.ejerciciosPropios = ejercicios.data().lista || {}; datos.videos = ejercicios.data().videos || {}; }
     datos.entrenadores = entrenadores.docs.map(d => ({ uid: d.id, ...d.data() })).sort(porNombre);
     return { perfil: { rol: 'profesor', esAdmin: true, nombre: NOMBRE_PROFESOR, uid: '' }, datos };
   }
@@ -124,7 +141,7 @@ export async function cargar(usuario) {
     alumnas.forEach(d => sumarAlumna(datos, d));
     datos.alumnas.sort(porNombre);
     datos.encuestas = encuestas.docs.map(d => d.data()).sort(porFecha);
-    if (ejercicios.exists()) datos.ejerciciosPropios = ejercicios.data().lista || {};
+    if (ejercicios.exists()) { datos.ejerciciosPropios = ejercicios.data().lista || {}; datos.videos = ejercicios.data().videos || {}; }
     return { perfil: { rol: 'profesor', esAdmin: false, nombre: e.nombre, uid: usuario.uid, debeCambiarClave: !!e.debeCambiarClave }, datos };
   }
 
@@ -139,8 +156,10 @@ export async function cargar(usuario) {
     getDocs(query(collection(db, 'encuestas'), where('uid', '==', usuario.uid))),
     getDoc(doc(db, 'config', idEjercicios(alumna.entrenadorUid)))
   ]);
-  if (ejercicios.exists()) datos.ejerciciosPropios = ejercicios.data().lista || {};
-  datos.registros = registros.docs.map(d => ({ alumnaId: ficha.id, ...d.data() }));
+  if (ejercicios.exists()) { datos.ejerciciosPropios = ejercicios.data().lista || {}; datos.videos = ejercicios.data().videos || {}; }
+  const leidos = leerRegistros(ficha.id, registros.docs);
+  datos.registros = leidos.registros;
+  datos.diario[ficha.id] = leidos.diario;
   datos.encuestas = encuestas.docs.map(d => d.data()).sort(porFecha);
   return {
     perfil: { rol: 'alumna', nombre: alumna.nombre, alumnaId: alumna.id, entrenadorUid: alumna.entrenadorUid, debeCambiarClave: alumna.debeCambiarClave },
@@ -251,12 +270,24 @@ export function guardarRegistro(alumnaId, registro) {
 }
 
 // La encuesta queda a nombre del entrenador del alumno (vacío = administradora)
+// Cómo se sintió el alumno ese día (carita) y su comentario. Uno por día: si lo cambia, se reemplaza.
+export function guardarDiario(alumnaId, fecha, { sensacion, comentario }) {
+  return setDoc(doc(db, 'alumnas', alumnaId, 'registros', `${fecha}_diario`), { tipo: 'diario', fecha, sensacion, comentario });
+}
+
 export function agregarEncuesta(encuesta) {
   return addDoc(collection(db, 'encuestas'), { ...encuesta, uid: auth.currentUser.uid });
 }
 
+// "merge" para no borrar los videos que están en el mismo documento
 export function guardarEjerciciosPropios(lista, entrenadorUid) {
-  return setDoc(doc(db, 'config', idEjercicios(entrenadorUid)), { lista });
+  return setDoc(doc(db, 'config', idEjercicios(entrenadorUid)), { lista }, { merge: true });
+}
+
+// Video demostrativo de un ejercicio (YouTube o TikTok). Vale para todos los alumnos de ese entrenador.
+// url vacía = quitar el video.
+export function guardarVideo(nombreEjercicio, url, entrenadorUid) {
+  return setDoc(doc(db, 'config', idEjercicios(entrenadorUid)), { videos: { [nombreEjercicio]: url || deleteField() } }, { merge: true });
 }
 
 /* ---------- Notificaciones (la campanita) ---------- */

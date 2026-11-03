@@ -9,7 +9,7 @@ import * as servidor from './servidor.js';
 import { leerPlanilla } from './excel.js';
 
 // Copia en memoria de lo que esta persona puede ver (se trae del servidor al ingresar)
-let datos = { alumnas: [], rutinas: {}, cambios: {}, registros: [], encuestas: [], notasProgreso: {}, ejerciciosPropios: {}, evaluaciones: {} };
+let datos = { alumnas: [], rutinas: {}, cambios: {}, registros: [], diario: {}, videos: {}, encuestas: [], notasProgreso: {}, ejerciciosPropios: {}, evaluaciones: {} };
 let perfil = null;
 let cargando = true; // mientras se conecta con el servidor
 let avisos = [];             // notificaciones de la campanita (llegan solas del servidor)
@@ -41,6 +41,15 @@ const ui = {
   verAvisos: false,         // está abierta la lista de notificaciones
   importacion: null,        // planilla de Excel leída, esperando que el profesor la confirme
   tipoIngreso: 'alumno',    // en la pantalla de ingreso: 'alumno' o 'entrenador'
+  sensacion: null,          // carita elegida por el alumno para el día
+  comentarioDia: '',        // comentario del día que está escribiendo el alumno
+  editandoDiario: false,    // el alumno está cambiando la carita/comentario que ya guardó
+  recien: '',               // ejercicio recién registrado (para animar el tilde)
+  editandoVideo: null,      // índice del ejercicio al que el profesor le está poniendo video
+  errorVideo: '',           // mensaje si el link no es de YouTube ni de TikTok
+  videoAbierto: '',         // video que el alumno está mirando
+  mes: fechaISO().slice(0, 7), // mes que ve el profesor en el calendario del progreso
+  diaProfe: fechaISO(),     // día elegido por el profesor en ese calendario
   entrenadorId: null,       // entrenador elegido por la administradora
   nuevoEntrenador: false,   // formulario de entrenador nuevo abierto
   errorEntrenador: '',      // mensaje si no se pudo crear un entrenador
@@ -198,6 +207,171 @@ function ejerciciosDe(disciplina, musculo) {
   return [...CATALOGO[disciplina][musculo], ...propios.map(e => [e.nombre, e.peso, true])];
 }
 
+const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+
+// Cómo se sintió el alumno: [clave, carita, texto]
+const SENSACIONES = [['costo', '😫', 'Me costó mucho'], ['normal', '😐', 'Normal'], ['bien', '💪', 'Bien'], ['excelente', '🔥', '¡Excelente!']];
+const sensacionDe = clave => SENSACIONES.find(s => s[0] === clave) || SENSACIONES[1];
+
+// Un ícono para cada grupo muscular
+const ICONOS_MUSCULO = {
+  'Pecho': '🏋️', 'Espalda': '🧗', 'Piernas': '🦵', 'Glúteos': '🍑', 'Hombros': '🤸', 'Bíceps': '💪', 'Tríceps': '💪',
+  'Abdomen': '🔥', 'Core': '🔥', 'Cardio': '❤️', 'Tren superior': '💪', 'Tren inferior': '🦵'
+};
+const iconoMusculo = m => ICONOS_MUSCULO[m] || '⭐';
+
+// Una frase por día (siempre la misma durante ese día)
+const FRASES = [
+  'No hace falta un día perfecto: hace falta venir.',
+  'La fuerza se construye de a poco, semana a semana.',
+  'Técnica primero, peso después.',
+  'Lo que anotás, lo podés mejorar.',
+  'Hoy es un buen día para superar tu marca.',
+  'Descansar bien también es parte del protocolo.',
+  'Cada serie suma. Hoy sumás una más.',
+  'Un entrenamiento a la vez.',
+  'Tu progreso de hoy es tu base de mañana.',
+  'Volvé a la cancha más fuerte que antes.'
+];
+function fraseDelDia(fecha) {
+  const n = Math.floor(new Date(fecha + 'T12:00') / 864e5);
+  return FRASES[n % FRASES.length];
+}
+
+function saludoPorHora() {
+  const h = new Date().getHours();
+  return h < 13 ? '¡Buen día' : h < 20 ? '¡Buenas tardes' : '¡Buenas noches';
+}
+
+// Minutos aproximados de una rutina: cada serie ~40 segundos más su pausa, y un minuto entre ejercicios
+function duracionAproximada(rutina) {
+  const segundos = rutina.reduce((total, ej) => total + ej.series * (40 + (ej.pausa || 0)) + 60, 0);
+  return Math.max(5, Math.round(segundos / 60 / 5) * 5);
+}
+
+function registroDe(alumnaId, nombre, fecha) {
+  return datos.registros.find(r => r.alumnaId === alumnaId && r.nombre === nombre && r.fecha === fecha);
+}
+
+/* ---------- Videos demostrativos (YouTube y TikTok) ---------- */
+
+// Revisa un link y arma la dirección para verlo dentro de la app.
+// Devuelve null si no es de YouTube ni de TikTok.
+function leerVideo(link) {
+  let url;
+  try { url = new URL(String(link || '').trim()); } catch (e) { return null; }
+  if (!['https:', 'http:'].includes(url.protocol)) return null;
+  const sitio = url.hostname.replace(/^(www|m|vm|vt)\./, '');
+  const valido = id => /^[\w-]{6,20}$/.test(id || '');
+  if (sitio === 'youtu.be' || sitio === 'youtube.com' || sitio === 'music.youtube.com') {
+    const corto = url.pathname.match(/^\/(shorts|embed|live)\/([\w-]+)/);
+    const id = sitio === 'youtu.be' ? url.pathname.slice(1) : corto ? corto[2] : url.searchParams.get('v');
+    if (!valido(id)) return null;
+    return { sitio: 'YouTube', vertical: !!corto && corto[1] === 'shorts', embebido: `https://www.youtube-nocookie.com/embed/${id}`, link: url.href };
+  }
+  if (sitio === 'tiktok.com') {
+    // Los links largos traen el número del video; los cortos (vm.tiktok.com) solo se pueden abrir en TikTok
+    const id = (url.pathname.match(/\/video\/(\d{8,25})/) || [])[1];
+    return { sitio: 'TikTok', vertical: true, embebido: id ? `https://www.tiktok.com/embed/v2/${id}` : null, link: url.href };
+  }
+  return null;
+}
+
+function videoDe(nombreEjercicio) { return leerVideo(datos.videos[nombreEjercicio]); }
+
+// Para el profesor, debajo de cada ejercicio de la rutina: agregar o cambiar el video
+function zonaVideo(ej, i) {
+  const video = videoDe(ej.nombre);
+  if (ui.editandoVideo !== i) {
+    return `<button class="boton-texto boton-video" data-accion="editar-video" data-valor="${i}">
+        🎬 ${video ? `Video de ${video.sitio} cargado · Cambiar` : 'Agregar video de cómo se hace'}</button>`;
+  }
+  return `<form class="form-video" data-form="video" data-nombre="${esc(ej.nombre)}">
+      <label class="campo">Link de YouTube o TikTok
+        <input name="link" type="url" inputmode="url" required value="${esc(datos.videos[ej.nombre] || '')}" placeholder="https://www.youtube.com/watch?v=… o https://www.tiktok.com/@…/video/…">
+      </label>
+      <p class="nota-chica">Vale para todos tus alumnos que tengan "${esc(ej.nombre)}" en su rutina.
+        Los links cortos de TikTok (vm.tiktok.com) se abren en TikTok; para verlo dentro de la app, usá el link largo del video.</p>
+      ${ui.errorVideo ? `<p class="error">${esc(ui.errorVideo)}</p>` : ''}
+      <div class="fila-botones">
+        <button type="button" class="boton secundario" data-accion="cancelar-video">Cancelar</button>
+        ${video ? '<button type="button" class="boton secundario" data-accion="quitar-video" data-valor="' + esc(ej.nombre) + '">Quitar</button>' : ''}
+        <button type="submit" class="boton">Guardar</button>
+      </div>
+    </form>`;
+}
+
+// Para el alumno: botón "Ver cómo se hace" y el video dentro de la app
+function verVideo(ej, clave) {
+  const video = videoDe(ej.nombre);
+  if (!video) return '';
+  const abierto = ui.videoAbierto === clave;
+  return `<button class="boton-texto boton-video" data-accion="ver-video" data-valor="${esc(clave)}">${abierto ? '▾ Ocultar video' : '▶ Ver cómo se hace'}</button>
+    ${abierto ? `<div class="video ${video.vertical ? 'vertical' : ''}">
+        ${video.embebido
+          ? `<iframe src="${esc(video.embebido)}" title="Cómo se hace ${esc(ej.nombre)}" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`
+          : '<p class="suave">Este video se abre en TikTok.</p>'}
+        <a class="boton-texto" href="${esc(video.link)}" target="_blank" rel="noopener noreferrer">Abrir en ${video.sitio} ↗</a>
+      </div>` : ''}`;
+}
+
+/* ---------- Festejos: confeti y vibración ---------- */
+
+const sinMovimiento = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+function vibrar(patron = [30, 40, 30]) { try { navigator.vibrate?.(patron); } catch (e) { /* nada */ } }
+
+// Confeti azul, oro y blanco (los colores de la marca) que cae por 2 segundos
+function confeti() {
+  if (sinMovimiento()) return;
+  const lienzo = document.createElement('canvas');
+  lienzo.className = 'confeti';
+  lienzo.width = innerWidth * devicePixelRatio; lienzo.height = innerHeight * devicePixelRatio;
+  document.body.appendChild(lienzo);
+  const c = lienzo.getContext('2d');
+  c.scale(devicePixelRatio, devicePixelRatio);
+  const colores = ['#4AB3F4', '#F0A500', '#FFFFFF'];
+  const papeles = Array.from({ length: 110 }, () => ({
+    x: innerWidth / 2 + (Math.random() - 0.5) * 80, y: innerHeight * 0.35,
+    vx: (Math.random() - 0.5) * 12, vy: -Math.random() * 12 - 4,
+    giro: Math.random() * 6, vg: (Math.random() - 0.5) * 0.4,
+    ancho: 6 + Math.random() * 6, alto: 4 + Math.random() * 4,
+    color: colores[Math.floor(Math.random() * colores.length)]
+  }));
+  const inicio = performance.now();
+  (function cuadro(ahora) {
+    const t = ahora - inicio;
+    c.clearRect(0, 0, innerWidth, innerHeight);
+    papeles.forEach(p => {
+      p.vy += 0.35; p.vx *= 0.99; p.x += p.vx; p.y += p.vy; p.giro += p.vg;
+      c.save(); c.translate(p.x, p.y); c.rotate(p.giro);
+      c.globalAlpha = Math.max(0, 1 - t / 2200);
+      c.fillStyle = p.color; c.fillRect(-p.ancho / 2, -p.alto / 2, p.ancho, p.alto);
+      c.restore();
+    });
+    if (t < 2200) requestAnimationFrame(cuadro); else lienzo.remove();
+  })(inicio);
+}
+
+function festejar() { confeti(); vibrar(); }
+
+/* ---------- Movimiento al cambiar de pantalla ---------- */
+
+// Los números con data-contar="37" cuentan desde 0 hasta su valor
+function contarNumeros(contenedor) {
+  if (sinMovimiento()) return;
+  contenedor.querySelectorAll('[data-contar]').forEach(el => {
+    const final = Number(el.dataset.contar), antes = el.dataset.antes || '', despues = el.dataset.despues || '';
+    const inicio = performance.now(), duracion = 800;
+    (function paso(ahora) {
+      const avance = Math.min(1, (ahora - inicio) / duracion);
+      const valor = final * (1 - Math.pow(1 - avance, 3)); // arranca rápido y frena suave
+      el.textContent = antes + numero(Number.isInteger(final) ? Math.round(valor) : valor) + despues;
+      if (avance < 1) requestAnimationFrame(paso);
+    })(inicio);
+  });
+}
+
 // Isologotipo (K + texto): según el manual de marca, es la variante principal.
 // Se usa siempre sobre fondo navy, sin estirarlo ni agregarle efectos.
 function logo(chico) {
@@ -215,7 +389,16 @@ function dibujar() {
   else if (perfil.rol === 'alumna') contenido = pantallaAlumna();
   else if (perfil.rol === 'profesor') contenido = pantallaProfesor();
   else if (perfil.rol === 'paciente') contenido = pantallaPaciente();
-  app.innerHTML = encabezado() + `<section class="contenido">${contenido}</section>` + menuInferior();
+  // Si cambió de pantalla (no un simple toque dentro de la misma), entra con movimiento
+  const clave = [perfil.rol, ui.pestana, ui.alumnaId, ui.seccionAlumna, ui.verAvisos, ui.entrenadorId, !!ui.importacion].join('|');
+  const nueva = clave !== dibujar.ultima;
+  dibujar.ultima = clave;
+  app.innerHTML = encabezado() + `<section class="contenido ${nueva ? 'entrando' : ''}">${contenido}</section>` + menuInferior();
+  if (nueva) {
+    const seccion = app.querySelector('.contenido');
+    [...seccion.children].forEach((el, i) => el.style.setProperty('--orden', Math.min(i, 8)));
+    contarNumeros(seccion);
+  }
 }
 
 function encabezado() {
@@ -375,9 +558,7 @@ function alumnaHoy() {
   const esFutura = fecha > hoy;
   const especial = !!cambiosDe(alumna.id)[fecha];
   const sePuedeRegistrar = !esFutura;
-  const titulo = `<h1>${esHoy ? 'Mi rutina de hoy' : 'Rutina del ' + fechaLarga(fecha)}</h1>
-    <p class="suave">${esc(alumna.disciplina)}</p>
-    ${selectorFecha('fecha-alumna', fecha, 'Elegí el día que querés ver o anotar')}`;
+  const titulo = portadaDelDia(alumna, fecha, rutina) + selectorFecha('fecha-alumna', fecha, 'Elegí el día que querés ver o anotar');
 
   // Cambiando su propia rutina
   if (ui.editando) {
@@ -399,12 +580,12 @@ function alumnaHoy() {
   }
 
   const tarjetas = rutina.map((ej, i) => {
-    const hecho = datos.registros.find(r => r.alumnaId === alumna.id && r.nombre === ej.nombre && r.fecha === fecha);
+    const hecho = registroDe(alumna.id, ej.nombre, fecha);
     const abierto = ui.registrando === i;
     const base = hecho || ej; // si ya registró, se muestra lo que hizo
-    return `<article class="tarjeta ejercicio ${hecho ? 'hecho' : ''}">
+    return `<article class="tarjeta ejercicio ${hecho ? 'hecho' : ''} ${ui.recien === ej.nombre + '|' + fecha ? 'recien' : ''}">
       <div class="ejercicio-titulo">
-        <div><small class="musculo">${esc(ej.musculo)}</small><h3>${esc(ej.nombre)}</h3>${notaDe(ej)}</div>
+        <div><small class="musculo">${iconoMusculo(ej.musculo)} ${esc(ej.musculo)}</small><h3>${esc(ej.nombre)}</h3>${notaDe(ej)}</div>
         ${hecho ? '<span class="check">✓</span>' : ''}
       </div>
       <div class="datos-ejercicio">
@@ -413,6 +594,7 @@ function alumnaHoy() {
         <div><b>${formatoPeso(ej.peso)}</b><small>peso</small></div>
         <div><b>${formatoPausa(ej.pausa)}</b><small>pausa</small></div>
       </div>
+      ${verVideo(ej, ej.nombre + '|' + i)}
       ${!sePuedeRegistrar ? '' : abierto ? `
         <form class="registro" data-form="registro" data-indice="${i}">
           <p class="registro-titulo">¿Qué hiciste ${esHoy ? 'hoy' : 'el ' + fechaLarga(fecha)}?</p>
@@ -438,19 +620,77 @@ function alumnaHoy() {
 
   return titulo + `
     ${especial ? '<p class="aviso-especial">Rutina especial para este día.</p>' : ''}
-    ${rutina.length ? tarjetas : `<div class="tarjeta vacio">${esHoy ? 'Hoy no tenés rutina: día de recuperación. Mañana seguimos.' : 'No hay rutina para este día.'}</div>`}
+    ${tarjetas}
     ${esFutura && rutina.length ? '<p class="suave centro">Este día todavía no llegó: vas a poder anotar lo que hiciste cuando llegue.</p>' : ''}
+    ${!esFutura ? tarjetaDiario(alumna, fecha) : ''}
     <button class="boton secundario ancho" data-accion="cambiar-mi-rutina">${rutina.length ? 'Cambiar mi rutina de este día' : 'Armar mi rutina para este día'}</button>`;
 }
 
-function alumnaProgreso() {
-  const alumnaId = perfil.alumnaId;
-  const est = estadisticasDe(alumnaId);
+// Arriba de la rutina: saludo, qué le toca, cuánto dura y cuánto lleva hecho
+function portadaDelDia(alumna, fecha, rutina) {
+  const hoy = fechaISO();
   const nombre = esc(perfil.nombre.split(' ')[0]);
+  const cuando = fecha === hoy ? 'Hoy te toca' : fecha > hoy ? `El ${fechaLarga(fecha)} te toca` : `El ${fechaLarga(fecha)} te tocaba`;
+  if (!rutina.length) {
+    return `<div class="tarjeta portada-dia">
+        <p class="portada-saludo">${saludoPorHora()}, ${nombre}! 👋</p>
+        <h1>${fecha === hoy ? 'Hoy: recuperación' : 'Sin rutina'}</h1>
+        <p class="portada-datos">${fecha === hoy ? 'Hoy no tenés rutina. Descansar también es parte del protocolo: mañana seguimos 😌' : `El ${fechaLarga(fecha)} no tiene rutina.`}</p>
+      </div>`;
+  }
+  const musculos = [...new Set(rutina.map(e => e.musculo).filter(Boolean))];
+  const hechos = rutina.filter(ej => registroDe(alumna.id, ej.nombre, fecha)).length;
+  const completo = hechos === rutina.length;
+  return `<div class="tarjeta portada-dia ${completo ? 'completa' : ''}">
+      <p class="portada-saludo">${saludoPorHora()}, ${nombre}! 👋</p>
+      <h1>${cuando}</h1>
+      <div class="portada-musculos">${musculos.map(m => `<span class="chip-musculo">${iconoMusculo(m)} ${esc(m)}</span>`).join('')}</div>
+      <p class="portada-datos">${rutina.length} ${rutina.length === 1 ? 'ejercicio' : 'ejercicios'} · unos ${duracionAproximada(rutina)} minutos · ${esc(alumna.disciplina)}</p>
+      ${fecha <= hoy ? `<div class="progreso-dia">
+          <span class="barra"><i style="width:${Math.round(hechos / rutina.length * 100)}%"></i></span>
+          <small>${completo ? '🎉 ¡Rutina completa!' : `${hechos} de ${rutina.length} hechos`}</small>
+        </div>` : ''}
+    </div>
+    <p class="frase-dia">“${fraseDelDia(fecha)}”</p>`;
+}
+
+// Abajo de la rutina: cómo se sintió (carita) y un comentario para su entrenador
+function tarjetaDiario(alumna, fecha) {
+  const guardado = datos.diario[alumna.id]?.[fecha];
+  if (guardado && !ui.editandoDiario) {
+    const [, carita, texto] = sensacionDe(guardado.sensacion);
+    return `<div class="tarjeta diario guardado">
+        <div class="fila-separada"><h3>¿Cómo te sentiste?</h3><button class="boton-texto" data-accion="editar-diario">Cambiar</button></div>
+        <p class="diario-resumen"><span class="carita-grande">${carita}</span> <b>${texto}</b></p>
+        ${guardado.comentario ? `<p class="suave">“${esc(guardado.comentario)}”</p>` : ''}
+        <p class="nota-chica">Tu entrenador ya lo puede ver.</p>
+      </div>`;
+  }
+  const elegida = ui.sensacion || guardado?.sensacion || null;
+  return `<form class="tarjeta diario" data-form="diario">
+      <h3>¿Cómo te sentiste?</h3>
+      <div class="caritas">${SENSACIONES.map(([clave, carita, texto]) => `
+        <button type="button" class="carita ${elegida === clave ? 'elegida' : ''}" data-accion="sensacion" data-valor="${clave}">
+          <span>${carita}</span><small>${texto}</small></button>`).join('')}
+      </div>
+      <label class="campo">Comentario para tu entrenador (opcional)
+        <textarea name="comentario-dia" rows="2" maxlength="300" placeholder="Ej.: Me molestó la rodilla en la prensa">${esc(ui.comentarioDia || guardado?.comentario || '')}</textarea>
+      </label>
+      <button type="submit" class="boton ancho" ${elegida ? '' : 'disabled'}>Guardar</button>
+    </form>`;
+}
+
+// El mismo progreso lo ven el alumno (vista 'alumno') y su entrenador (vista 'profe')
+function alumnaProgreso(alumnaId = perfil.alumnaId, vista = 'alumno') {
+  const est = estadisticasDe(alumnaId);
+  const paraProfe = vista === 'profe';
+  const t = (alAlumno, alProfe) => paraProfe ? alProfe : alAlumno;
+  const nombre = esc((paraProfe ? alumnaPorId(alumnaId).nombre : perfil.nombre).split(' ')[0]);
   const nota = datos.notasProgreso[alumnaId];
   const mensajeProfe = nota ? `<div class="tarjeta nota-profe"><h3>Mensaje de tu profe</h3><p>${esc(nota)}</p></div>` : '';
 
   if (!est.ejercicios.length) {
+    if (paraProfe) return `<div class="tarjeta vacio">${nombre} todavía no registró ejercicios.</div>`;
     return `<div class="tarjeta saludo"><h1>¡Hola, ${nombre}!</h1>
         <p>Tu progreso arranca con el primer registro. Anotá lo que hagas hoy en <b>Rutina</b> y desde acá vas a ver, con números, cuánto avanzás semana a semana.</p></div>
       ${mensajeProfe}${evaluacionDeAlumna(alumnaId)}`;
@@ -465,24 +705,25 @@ function alumnaProgreso() {
   const conPorcentaje = est.ejercicios.filter(e => e.pct !== null).sort((a, b) => b.pct - a.pct);
   const maxBarra = Math.max(10, ...conPorcentaje.map(e => Math.abs(e.pct)));
 
-  return `<div class="tarjeta saludo">
+  const contador = (n, antes = '', despues = '') => `<span data-contar="${n}" data-antes="${antes}" data-despues="${despues}">${antes}${numero(n)}${despues}</span>`;
+  return `${paraProfe ? '' : `<div class="tarjeta saludo">
       <h1>${tituloSaludo(est, nombre)}</h1>
       ${mensajesSaludo(est).map(m => `<p>${m}</p>`).join('')}
-    </div>
+    </div>`}
 
     <div class="resumen">
-      <div class="tarjeta"><b>🔥 ${est.racha}</b><small>${est.racha === 1 ? 'semana seguida' : 'semanas seguidas'}</small></div>
-      <div class="tarjeta"><b>📅 ${est.esteMes}</b><small>${est.esteMes === 1 ? 'entrenamiento' : 'entrenamientos'} este mes</small></div>
-      <div class="tarjeta"><b>🏆 ${est.records.length}</b><small>${est.records.length === 1 ? 'récord' : 'récords'}</small></div>
+      <div class="tarjeta"><b>🔥 ${contador(est.racha)}</b><small>${est.racha === 1 ? 'semana seguida' : 'semanas seguidas'}</small></div>
+      <div class="tarjeta"><b>📅 ${contador(est.esteMes)}</b><small>${est.esteMes === 1 ? 'entrenamiento' : 'entrenamientos'} este mes</small></div>
+      <div class="tarjeta"><b>🏆 ${contador(est.records.length)}</b><small>${est.records.length === 1 ? 'récord' : 'récords'}</small></div>
     </div>
 
     ${est.promedio !== null ? `<div class="tarjeta mejora-general">
-        <small>Tu mejora promedio desde que empezaste</small>
-        <b class="${est.promedio > 0 ? 'oro' : ''}">${est.promedio > 0 ? '+' : ''}${est.promedio} %</b>
-        <p>${est.promedio > 0 ? `Sumando todos tus ejercicios, hoy movés en promedio un ${est.promedio} % más que el primer día.` : 'Por ahora estás sosteniendo tus marcas iniciales. Sostener también es parte del proceso.'}</p>
+        <small>${t('Tu mejora promedio desde que empezaste', 'Mejora promedio desde que empezó')}</small>
+        <b class="${est.promedio > 0 ? 'oro' : ''}">${contador(est.promedio, est.promedio > 0 ? '+' : '', ' %')}</b>
+        ${paraProfe ? '' : `<p>${est.promedio > 0 ? `Sumando todos tus ejercicios, hoy movés en promedio un ${est.promedio} % más que el primer día.` : 'Por ahora estás sosteniendo tus marcas iniciales. Sostener también es parte del proceso.'}</p>`}
       </div>` : ''}
 
-    ${conPorcentaje.length ? `<h2>Cuánto mejoraste en cada ejercicio</h2>
+    ${conPorcentaje.length ? `<h2>${t('Cuánto mejoraste en cada ejercicio', 'Cuánto mejoró en cada ejercicio')}</h2>
       <div class="tarjeta">${conPorcentaje.map(e => `
         <button class="barra-ejercicio ${e.nombre === ui.ejercicioGrafico ? 'activa' : ''}" data-accion="ver-ejercicio" data-valor="${esc(e.nombre)}">
           <span class="fila-separada"><span>${esc(e.nombre)}${e.record ? ' 🏆' : ''}</span>
@@ -509,21 +750,19 @@ function alumnaProgreso() {
       ${grafico(elegido.lista.map(r => ({ fecha: r.fecha, valor: r.peso })), 'var(--azul)')}
       ${elegido.conPeso && elegido.lista.length > 1 ? '<p class="nota-chica">El punto dorado es tu mejor marca.</p>' : ''}
     </div>
-    <div class="tarjeta significado">
+    ${paraProfe ? '' : `<div class="tarjeta significado">
       <h3>Qué significa tu progreso</h3>
       <p>${significadoProgreso(elegido.lista, mejorPeso, mejorReps)}</p>
-    </div>
+    </div>`}
 
-    ${est.records.length ? `<h2>Tus récords 🏆</h2>
+    ${est.records.length ? `<h2>${t('Tus récords', 'Sus récords')} 🏆</h2>
       <div class="tarjeta">${est.records.map(e => `<div class="fila-separada fila-test">
           <span>${esc(e.nombre)}</span><b>${valorConUnidad(e, e.record)} <small class="suave">· ${formatoFecha(e.record.fecha)}</small></b>
         </div>`).join('')}
-        <p class="nota-chica">Cada récord es una marca que antes no podías hacer.</p>
+        ${paraProfe ? '' : '<p class="nota-chica">Cada récord es una marca que antes no podías hacer.</p>'}
       </div>` : ''}
 
-    ${comparacionConEvaluacion(alumnaId, est)}
-    ${mensajeProfe}
-    ${evaluacionDeAlumna(alumnaId)}`;
+    ${paraProfe ? '' : comparacionConEvaluacion(alumnaId, est) + mensajeProfe + evaluacionDeAlumna(alumnaId)}`;
 }
 
 // Números del progreso de un alumno: mejoras por ejercicio, récords y constancia
@@ -812,7 +1051,7 @@ function fichaEntrenador() {
 // Ficha de una alumna: datos de su cuenta y pestañas Rutina / Evaluación inicial
 function profesorFichaAlumna() {
   const alumna = alumnaPorId(ui.alumnaId);
-  const secciones = [['rutina', 'Rutina'], ['evaluacion', 'Evaluación inicial']];
+  const secciones = [['rutina', 'Rutina'], ['progreso', 'Progreso'], ['evaluacion', 'Evaluación']];
   return `<button class="boton-texto volver" data-accion="volver">‹ Alumnos</button>
     <h1>${esc(alumna.nombre)}</h1>
     <p class="suave">${esc(alumna.disciplina)} · DNI ${esc(alumna.dni)}${perfil.esAdmin && alumna.entrenadorUid ? ` · Entrenador: ${esc(alumna.entrenadorNombre)}` : ''}</p>
@@ -829,7 +1068,87 @@ function profesorFichaAlumna() {
     <div class="pestanas-internas">${secciones.map(([id, texto]) =>
       `<button class="${ui.seccionAlumna === id ? 'activa' : ''}" data-accion="seccion-alumna" data-valor="${id}">${texto}</button>`).join('')}
     </div>
-    ${ui.seccionAlumna === 'evaluacion' ? profesorEvaluacion(alumna) : profesorRutina(alumna)}`;
+    ${ui.seccionAlumna === 'evaluacion' ? profesorEvaluacion(alumna) : ui.seccionAlumna === 'progreso' ? profesorProgreso(alumna) : profesorRutina(alumna)}`;
+}
+
+/* ---------- Progreso del alumno visto por el profesor ---------- */
+
+// Los registros de cada alumno se traen recién cuando el profesor abre su progreso
+const registrosCargados = new Set();
+function cargarRegistrosDe(alumnaId) {
+  if (registrosCargados.has(alumnaId) || cargarRegistrosDe.cargando === alumnaId) return;
+  cargarRegistrosDe.cargando = alumnaId;
+  servidor.cargarRegistrosDe(alumnaId)
+    .then(({ registros, diario }) => {
+      datos.registros = datos.registros.filter(r => r.alumnaId !== alumnaId).concat(registros);
+      datos.diario[alumnaId] = diario;
+      registrosCargados.add(alumnaId);
+    })
+    .catch(mostrarError)
+    .finally(() => { cargarRegistrosDe.cargando = null; dibujar.ultima = null; dibujar(); });
+}
+
+function profesorProgreso(alumna) {
+  if (!registrosCargados.has(alumna.id)) { cargarRegistrosDe(alumna.id); return '<div class="tarjeta vacio">Cargando lo que registró…</div>'; }
+  return `<h2>Día por día</h2>
+    ${calendarioDelMes(alumna)}
+    ${detalleDelDia(alumna, ui.diaProfe)}
+    <h2>Sus números</h2>
+    ${alumnaProgreso(alumna.id, 'profe')}`;
+}
+
+// Calendario del mes: punto azul = entrenó, punto dorado = dejó comentario
+function calendarioDelMes(alumna) {
+  const [anio, mes] = ui.mes.split('-').map(Number);
+  const primero = `${ui.mes}-01`;
+  const diasDelMes = new Date(anio, mes, 0).getDate();
+  const hueco = (diaDeSemana(primero) + 6) % 7; // empieza en lunes
+  const entreno = new Set(datos.registros.filter(r => r.alumnaId === alumna.id).map(r => r.fecha));
+  const diario = datos.diario[alumna.id] || {};
+  const hoy = fechaISO();
+  const nombreMes = `${MESES[mes - 1]} ${anio}`;
+  const celdas = [];
+  for (let i = 0; i < hueco; i++) celdas.push('<span></span>');
+  for (let d = 1; d <= diasDelMes; d++) {
+    const fecha = `${ui.mes}-${String(d).padStart(2, '0')}`;
+    celdas.push(`<button class="dia-cal ${fecha === ui.diaProfe ? 'elegido' : ''} ${fecha === hoy ? 'hoy' : ''}" data-accion="dia-profe" data-valor="${fecha}">
+        ${d}<i>${entreno.has(fecha) ? '<b class="punto-azul"></b>' : ''}${diario[fecha] ? '<b class="punto-oro"></b>' : ''}</i></button>`);
+  }
+  return `<div class="tarjeta calendario">
+      <div class="fila-separada">
+        <button class="boton-icono" data-accion="mes" data-valor="-1" aria-label="Mes anterior">‹</button>
+        <b class="mes-titulo">${nombreMes}</b>
+        <button class="boton-icono" data-accion="mes" data-valor="1" aria-label="Mes siguiente">›</button>
+      </div>
+      <div class="grilla-cal">${['L', 'M', 'M', 'J', 'V', 'S', 'D'].map(d => `<small>${d}</small>`).join('')}${celdas.join('')}</div>
+      <p class="nota-chica"><b class="punto-azul"></b> entrenó · <b class="punto-oro"></b> dejó un comentario</p>
+    </div>`;
+}
+
+// Qué le tocaba ese día, qué hizo y cómo se sintió
+function detalleDelDia(alumna, fecha) {
+  const plan = rutinaDeFecha(alumna.id, fecha);
+  const hechos = datos.registros.filter(r => r.alumnaId === alumna.id && r.fecha === fecha);
+  const diario = datos.diario[alumna.id]?.[fecha];
+  const nombres = new Set(plan.map(e => e.nombre));
+  const extra = hechos.filter(r => !nombres.has(r.nombre));
+  const cumplidos = plan.filter(e => hechos.some(r => r.nombre === e.nombre)).length;
+  const fila = (ej, r) => {
+    if (!r) return `<div class="fila-dia-profe falta"><span>✗ ${esc(ej.nombre)}</span><small>No lo registró</small></div>`;
+    const mas = ej && ej.peso > 0 && r.peso > ej.peso ? ` <b class="oro">⬆ +${numero(r.peso - ej.peso)} kg</b>` : '';
+    return `<div class="fila-dia-profe"><span>✓ ${esc(r.nombre)}${ej ? '' : ' <em class="etiqueta-propio">Fuera de la rutina</em>'}</span>
+        <small>${r.series} × ${r.reps} · ${formatoPeso(r.peso)} · pausa ${formatoPausa(r.pausa)}${mas}</small></div>`;
+  };
+  const sinNada = !hechos.length && !diario;
+  return `<div class="tarjeta detalle-dia">
+      <h3>${fechaLarga(fecha)}</h3>
+      ${plan.length ? `<p class="suave">${fecha > fechaISO() ? `Le toca: ${plan.length} ejercicios.` : `Hizo <b>${cumplidos} de ${plan.length}</b> ejercicios de su rutina.`}</p>` : '<p class="suave">No tenía rutina este día.</p>'}
+      ${plan.map(ej => fila(ej, hechos.find(r => r.nombre === ej.nombre))).join('')}
+      ${extra.map(r => fila(null, r)).join('')}
+      ${diario ? `<div class="diario-profe"><span class="carita-grande">${sensacionDe(diario.sensacion)[1]}</span>
+          <span><b>${sensacionDe(diario.sensacion)[2]}</b>${diario.comentario ? `<br>“${esc(diario.comentario)}”` : ''}</span></div>` : ''}
+      ${sinNada && fecha <= fechaISO() && plan.length ? '<p class="nota-chica">Este día no registró nada.</p>' : ''}
+    </div>`;
 }
 
 function profesorRutina(alumna) {
@@ -964,6 +1283,7 @@ function editorRutina(alumna) {
         ${ajuste(i, 'peso', 'Peso', formatoPeso(ej.peso))}
         ${ajuste(i, 'pausa', 'Pausa', formatoPausa(ej.pausa))}
       </div>
+      ${perfil.rol === 'profesor' ? zonaVideo(ej, i) : ''}
     </article>`).join('');
   return `${items || '<div class="tarjeta vacio">Este día no tiene ejercicios todavía.</div>'}
     ${ui.agregando ? selectorEjercicios(alumna) : '<button class="boton ancho" data-accion="abrir-agregar">+ Agregar ejercicio</button>'}`;
@@ -1154,15 +1474,16 @@ app.addEventListener('click', ev => {
       ui.agregando = false; ui.creando = false; ui.modoRutina = 'semanal'; ui.dia = new Date().getDay(); ui.fechaRutina = fechaISO();
       break;
     case 'pestana':
-      ui.entrenadorId = null; ui.nuevoEntrenador = false;
+      ui.entrenadorId = null; ui.nuevoEntrenador = false; ui.editandoVideo = null; ui.videoAbierto = '';
       ui.verAvisos = false; ui.editando = false; ui.eligiendoAlcance = false; ui.reemplazando = null;
       ui.pestana = v; ui.alumnaId = null; ui.agregando = false; ui.creando = false; ui.registrando = null;
       ui.dia = new Date().getDay(); ui.fecha = fechaISO(); ui.estrellas = 0; ui.comentario = '';
       break;
     case 'dia':
-      ui.dia = Number(v); ui.registrando = null;
+      ui.dia = Number(v); ui.registrando = null; ui.editandoVideo = null;
       break;
-    case 'fecha-alumna': ui.fecha = v; ui.registrando = null; ui.editando = false; ui.eligiendoAlcance = false; ui.agregando = false; break;
+    case 'fecha-alumna': ui.fecha = v; ui.registrando = null; ui.editando = false; ui.eligiendoAlcance = false; ui.agregando = false;
+      ui.sensacion = null; ui.comentarioDia = ''; ui.editandoDiario = false; ui.videoAbierto = ''; break;
     case 'fecha-rutina': ui.fechaRutina = v; ui.agregando = false; break;
     case 'modo-rutina': ui.modoRutina = v; ui.agregando = false; ui.creando = false; break;
     case 'personalizar-fecha': {
@@ -1196,6 +1517,22 @@ app.addEventListener('click', ev => {
       mostrarAviso('Rutina guardada'); return;
     // Alumno: registrar
     case 'ver-ejercicio': ui.ejercicioGrafico = v; break;
+    case 'ver-video': ui.videoAbierto = ui.videoAbierto === v ? '' : v; break;
+    case 'editar-video': ui.editandoVideo = Number(v); ui.errorVideo = ''; break;
+    case 'cancelar-video': ui.editandoVideo = null; break;
+    case 'quitar-video':
+      delete datos.videos[v];
+      ui.editandoVideo = null;
+      servidor.guardarVideo(v, '', perfil.uid).catch(mostrarError);
+      mostrarAviso('Video quitado'); return;
+    case 'sensacion': ui.sensacion = v; vibrar(15); break;
+    case 'editar-diario': ui.editandoDiario = true; ui.sensacion = null; ui.comentarioDia = ''; break;
+    case 'dia-profe': ui.diaProfe = v; break;
+    case 'mes': {
+      const [a, m] = ui.mes.split('-').map(Number);
+      ui.mes = fechaISO(new Date(a, m - 1 + Number(v), 1)).slice(0, 7);
+      break;
+    }
     case 'registrar': ui.registrando = Number(v); break;
     case 'cancelar-registro': ui.registrando = null; break;
     case 'estrella': ui.estrellas = Number(v); break;
@@ -1205,6 +1542,7 @@ app.addEventListener('click', ev => {
       ui.alumnaId = v; ui.agregando = false; ui.creando = false;
       ui.seccionAlumna = 'rutina'; ui.agregandoTest = false;
       ui.dia = new Date().getDay(); ui.modoRutina = 'semanal'; ui.fechaRutina = fechaISO();
+      ui.mes = fechaISO().slice(0, 7); ui.diaProfe = fechaISO();
       break;
     case 'volver': ui.importacion = null; ui.alumnaId = null; ui.agregando = false; ui.creando = false; break;
     case 'seccion-alumna': ui.seccionAlumna = v; ui.agregandoTest = false; break;
@@ -1260,7 +1598,9 @@ app.addEventListener('click', ev => {
 app.addEventListener('change', ev => {
   const cambio = ev.target.dataset.cambio;
   if (cambio === 'ejercicio-grafico') { ui.ejercicioGrafico = ev.target.value; dibujar(); }
-  if (cambio === 'fecha-alumna' && ev.target.value) { ui.fecha = ev.target.value; ui.registrando = null; dibujar(); }
+  if (cambio === 'fecha-alumna' && ev.target.value) {
+    ui.fecha = ev.target.value; ui.registrando = null; ui.sensacion = null; ui.comentarioDia = ''; ui.editandoDiario = false; dibujar();
+  }
   if (cambio === 'fecha-rutina' && ev.target.value) { ui.fechaRutina = ev.target.value; ui.agregando = false; dibujar(); }
   if (cambio === 'tipo-test') { ui.testElegido = ev.target.value; dibujar(); }
   if (cambio === 'importar-semana') { ui.importacion.semana = Number(ev.target.value); dibujar(); }
@@ -1318,6 +1658,7 @@ function evaluacionActual() {
 
 app.addEventListener('input', ev => {
   if (ev.target.name === 'comentario') ui.comentario = ev.target.value;
+  if (ev.target.name === 'comentario-dia') ui.comentarioDia = ev.target.value;
 });
 
 app.addEventListener('submit', ev => {
@@ -1368,12 +1709,48 @@ app.addEventListener('submit', ev => {
     // ¿Es un récord? (supera el mejor peso anterior de ese ejercicio)
     const anteriores = datos.registros.filter(r => r.alumnaId === perfil.alumnaId && r.nombre === ej.nombre);
     const esRecord = registro.peso > 0 && anteriores.length > 0 && registro.peso > Math.max(...anteriores.map(r => r.peso));
+    const rutinaDelDia = rutinaDeFecha(perfil.alumnaId, fecha);
+    const completaAntes = rutinaDelDia.every(e => registroDe(perfil.alumnaId, e.nombre, fecha));
     datos.registros.push(registro);
+    const completaAhora = rutinaDelDia.every(e => registroDe(perfil.alumnaId, e.nombre, fecha));
+    const recienCompleta = completaAhora && !completaAntes;
     ui.registrando = null;
-    mostrarAviso(esRecord ? `🏆 ¡Nuevo récord en ${ej.nombre}: ${formatoPeso(registro.peso)}!` : 'Registro guardado. Sumaste progreso');
+    ui.recien = ej.nombre + '|' + fecha; // el tilde aparece con un saltito (una sola vez)
+    setTimeout(() => { ui.recien = ''; }, 1200);
+    mostrarAviso(esRecord ? `🏆 ¡Nuevo récord en ${ej.nombre}: ${formatoPeso(registro.peso)}!`
+      : recienCompleta ? '🎉 ¡Rutina completa! Muy buen trabajo' : 'Registro guardado. Sumaste progreso');
+    if (esRecord || recienCompleta) festejar(); else vibrar(20);
+    if (recienCompleta) servidor.avisarAlProfe(perfil.alumnaId, `🎉 ${perfil.nombre} completó su rutina del ${fechaLarga(fecha)}.`, perfil.entrenadorUid).catch(e => console.error(e));
     servidor.guardarRegistro(perfil.alumnaId, registro).catch(mostrarError);
     servidor.avisarAlProfe(perfil.alumnaId,
       `${esRecord ? '🏆 Nuevo récord: ' : ''}${perfil.nombre} registró ${ej.nombre} (${fechaLarga(fecha)}): ${registro.series} × ${registro.reps} con ${formatoPeso(registro.peso)}.`, perfil.entrenadorUid)
+      .catch(e => console.error(e));
+  }
+
+  if (f.dataset.form === 'video') {
+    const link = String(campos.get('link') || '').trim();
+    const video = leerVideo(link);
+    if (!video) { ui.errorVideo = 'Ese link no es de YouTube ni de TikTok. Copialo con el botón "Compartir" del video y pegalo acá.'; dibujar(); return; }
+    const nombre = f.dataset.nombre;
+    datos.videos[nombre] = video.link;
+    ui.editandoVideo = null; ui.errorVideo = '';
+    servidor.guardarVideo(nombre, video.link, perfil.uid).catch(mostrarError);
+    mostrarAviso(video.embebido ? `🎬 Video de ${video.sitio} guardado` : '🎬 Guardado. Como es un link corto de TikTok, se va a abrir en TikTok');
+  }
+
+  if (f.dataset.form === 'diario') {
+    const fecha = ui.fecha;
+    const sensacion = ui.sensacion || datos.diario[perfil.alumnaId]?.[fecha]?.sensacion;
+    if (!sensacion) return;
+    const comentario = String(campos.get('comentario-dia') || '').trim().slice(0, 300);
+    (datos.diario[perfil.alumnaId] ||= {})[fecha] = { sensacion, comentario };
+    ui.sensacion = null; ui.comentarioDia = ''; ui.editandoDiario = false;
+    const [, carita, texto] = sensacionDe(sensacion);
+    mostrarAviso(sensacion === 'costo' ? 'Gracias por contarlo. Tu entrenador lo va a ver 🤝' : `${carita} ¡Gracias por contarlo!`);
+    vibrar(20);
+    servidor.guardarDiario(perfil.alumnaId, fecha, { sensacion, comentario }).catch(mostrarError);
+    servidor.avisarAlProfe(perfil.alumnaId,
+      `${carita} ${perfil.nombre} contó cómo le fue el ${fechaLarga(fecha)}: ${texto}${comentario ? ` — “${comentario}”` : ''}`, perfil.entrenadorUid)
       .catch(e => console.error(e));
   }
 
