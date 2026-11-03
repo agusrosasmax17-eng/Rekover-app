@@ -88,6 +88,7 @@ Rekover es **Sports Recovery**. El PDF del manual es confidencial: no subirlo al
   - **El profesor ve el progreso del alumno** (ficha → pestaña Progreso): calendario del mes (punto azul = entrenó, punto dorado = dejó comentario), detalle de cada día (qué le tocaba, qué hizo con ✓/✗, si superó el peso planeado, su carita y comentario) y los mismos números del progreso del alumno. Los registros de cada alumno se traen recién al abrir esa pestaña.
   - **Diario del alumno**: debajo de su rutina de cada día, "¿Cómo te sentiste?" con 4 caritas (😫 Me costó mucho · 😐 Normal · 💪 Bien · 🔥 ¡Excelente!) y un comentario opcional; le llega un aviso a su entrenador. Se guarda como `alumnas/{id}/registros/{fecha}_diario` con `tipo: 'diario'` (por eso no hizo falta cambiar las reglas).
   - **App más dinámica**: portada del día ("¡Buen día, Sofía! Hoy te toca…", músculos con ícono, cantidad de ejercicios y minutos aproximados, barra de "hechos"), frase motivadora del día; festejos con confeti azul/oro/blanco y vibración al completar la rutina del día o batir un récord (y aviso "completó su rutina" al entrenador); tilde con saltito al registrar; las pantallas entran con movimiento suave, los números cuentan hasta su valor, las barras se llenan y los botones rebotan al tocarlos. Si el celular tiene "reducir movimiento" activado, no se anima nada.
+  - **Videos demostrativos**: el entrenador (o la administradora), en la rutina del alumno, toca "🎬 Agregar video de cómo se hace" y pega un link de YouTube (normal o Shorts) o de TikTok. Se guarda **por nombre de ejercicio** en `config/ejercicios` (o `config/ejercicios_{uid}`), campo `videos`, así vale para todos sus alumnos. El alumno toca "▶ Ver cómo se hace" y lo ve dentro de la app (YouTube con `youtube-nocookie.com/embed`, TikTok con `tiktok.com/embed/v2/{id}`). Los links cortos de TikTok (`vm.tiktok.com`) no traen el número del video: se abren en TikTok. Solo se aceptan links de YouTube o TikTok (`leerVideo` en `js/app.js`).
   - Encuesta del gimnasio.
 - Ideas propuestas y todavía no hechas (la dueña eligió hacerlas más adelante): modo "Entrenar ahora" con cronómetro de pausa, medallas/logros, tablero "Hoy en el gym" para el profesor.
 - Pilates: "Próximamente".
@@ -111,7 +112,7 @@ Rekover es **Sports Recovery**. El PDF del manual es confidencial: no subirlo al
 - `alumnas/{id}/avisos/{id}` → notificaciones para el alumno (las crea el profesor).
 - `avisosProfe/{id}` → notificaciones para la administradora (de sus propios alumnos).
 - `encuestas/{id}` → respuestas de la encuesta (con `entrenadorUid` del alumno).
-- `config/ejercicios` → ejercicios propios de la administradora; `config/ejercicios_{uid}` → los de cada entrenador.
+- `config/ejercicios` → ejercicios propios y videos (`videos: { nombreEjercicio: link }`) de la administradora; `config/ejercicios_{uid}` → los de cada entrenador.
 
 ## Cómo está organizado el código
 

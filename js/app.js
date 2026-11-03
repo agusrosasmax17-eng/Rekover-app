@@ -9,7 +9,7 @@ import * as servidor from './servidor.js';
 import { leerPlanilla } from './excel.js';
 
 // Copia en memoria de lo que esta persona puede ver (se trae del servidor al ingresar)
-let datos = { alumnas: [], rutinas: {}, cambios: {}, registros: [], diario: {}, encuestas: [], notasProgreso: {}, ejerciciosPropios: {}, evaluaciones: {} };
+let datos = { alumnas: [], rutinas: {}, cambios: {}, registros: [], diario: {}, videos: {}, encuestas: [], notasProgreso: {}, ejerciciosPropios: {}, evaluaciones: {} };
 let perfil = null;
 let cargando = true; // mientras se conecta con el servidor
 let avisos = [];             // notificaciones de la campanita (llegan solas del servidor)
@@ -45,6 +45,9 @@ const ui = {
   comentarioDia: '',        // comentario del día que está escribiendo el alumno
   editandoDiario: false,    // el alumno está cambiando la carita/comentario que ya guardó
   recien: '',               // ejercicio recién registrado (para animar el tilde)
+  editandoVideo: null,      // índice del ejercicio al que el profesor le está poniendo video
+  errorVideo: '',           // mensaje si el link no es de YouTube ni de TikTok
+  videoAbierto: '',         // video que el alumno está mirando
   mes: fechaISO().slice(0, 7), // mes que ve el profesor en el calendario del progreso
   diaProfe: fechaISO(),     // día elegido por el profesor en ese calendario
   entrenadorId: null,       // entrenador elegido por la administradora
@@ -248,6 +251,68 @@ function duracionAproximada(rutina) {
 
 function registroDe(alumnaId, nombre, fecha) {
   return datos.registros.find(r => r.alumnaId === alumnaId && r.nombre === nombre && r.fecha === fecha);
+}
+
+/* ---------- Videos demostrativos (YouTube y TikTok) ---------- */
+
+// Revisa un link y arma la dirección para verlo dentro de la app.
+// Devuelve null si no es de YouTube ni de TikTok.
+function leerVideo(link) {
+  let url;
+  try { url = new URL(String(link || '').trim()); } catch (e) { return null; }
+  if (!['https:', 'http:'].includes(url.protocol)) return null;
+  const sitio = url.hostname.replace(/^(www|m|vm|vt)\./, '');
+  const valido = id => /^[\w-]{6,20}$/.test(id || '');
+  if (sitio === 'youtu.be' || sitio === 'youtube.com' || sitio === 'music.youtube.com') {
+    const corto = url.pathname.match(/^\/(shorts|embed|live)\/([\w-]+)/);
+    const id = sitio === 'youtu.be' ? url.pathname.slice(1) : corto ? corto[2] : url.searchParams.get('v');
+    if (!valido(id)) return null;
+    return { sitio: 'YouTube', vertical: !!corto && corto[1] === 'shorts', embebido: `https://www.youtube-nocookie.com/embed/${id}`, link: url.href };
+  }
+  if (sitio === 'tiktok.com') {
+    // Los links largos traen el número del video; los cortos (vm.tiktok.com) solo se pueden abrir en TikTok
+    const id = (url.pathname.match(/\/video\/(\d{8,25})/) || [])[1];
+    return { sitio: 'TikTok', vertical: true, embebido: id ? `https://www.tiktok.com/embed/v2/${id}` : null, link: url.href };
+  }
+  return null;
+}
+
+function videoDe(nombreEjercicio) { return leerVideo(datos.videos[nombreEjercicio]); }
+
+// Para el profesor, debajo de cada ejercicio de la rutina: agregar o cambiar el video
+function zonaVideo(ej, i) {
+  const video = videoDe(ej.nombre);
+  if (ui.editandoVideo !== i) {
+    return `<button class="boton-texto boton-video" data-accion="editar-video" data-valor="${i}">
+        🎬 ${video ? `Video de ${video.sitio} cargado · Cambiar` : 'Agregar video de cómo se hace'}</button>`;
+  }
+  return `<form class="form-video" data-form="video" data-nombre="${esc(ej.nombre)}">
+      <label class="campo">Link de YouTube o TikTok
+        <input name="link" type="url" inputmode="url" required value="${esc(datos.videos[ej.nombre] || '')}" placeholder="https://www.youtube.com/watch?v=… o https://www.tiktok.com/@…/video/…">
+      </label>
+      <p class="nota-chica">Vale para todos tus alumnos que tengan "${esc(ej.nombre)}" en su rutina.
+        Los links cortos de TikTok (vm.tiktok.com) se abren en TikTok; para verlo dentro de la app, usá el link largo del video.</p>
+      ${ui.errorVideo ? `<p class="error">${esc(ui.errorVideo)}</p>` : ''}
+      <div class="fila-botones">
+        <button type="button" class="boton secundario" data-accion="cancelar-video">Cancelar</button>
+        ${video ? '<button type="button" class="boton secundario" data-accion="quitar-video" data-valor="' + esc(ej.nombre) + '">Quitar</button>' : ''}
+        <button type="submit" class="boton">Guardar</button>
+      </div>
+    </form>`;
+}
+
+// Para el alumno: botón "Ver cómo se hace" y el video dentro de la app
+function verVideo(ej, clave) {
+  const video = videoDe(ej.nombre);
+  if (!video) return '';
+  const abierto = ui.videoAbierto === clave;
+  return `<button class="boton-texto boton-video" data-accion="ver-video" data-valor="${esc(clave)}">${abierto ? '▾ Ocultar video' : '▶ Ver cómo se hace'}</button>
+    ${abierto ? `<div class="video ${video.vertical ? 'vertical' : ''}">
+        ${video.embebido
+          ? `<iframe src="${esc(video.embebido)}" title="Cómo se hace ${esc(ej.nombre)}" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`
+          : '<p class="suave">Este video se abre en TikTok.</p>'}
+        <a class="boton-texto" href="${esc(video.link)}" target="_blank" rel="noopener noreferrer">Abrir en ${video.sitio} ↗</a>
+      </div>` : ''}`;
 }
 
 /* ---------- Festejos: confeti y vibración ---------- */
@@ -529,6 +594,7 @@ function alumnaHoy() {
         <div><b>${formatoPeso(ej.peso)}</b><small>peso</small></div>
         <div><b>${formatoPausa(ej.pausa)}</b><small>pausa</small></div>
       </div>
+      ${verVideo(ej, ej.nombre + '|' + i)}
       ${!sePuedeRegistrar ? '' : abierto ? `
         <form class="registro" data-form="registro" data-indice="${i}">
           <p class="registro-titulo">¿Qué hiciste ${esHoy ? 'hoy' : 'el ' + fechaLarga(fecha)}?</p>
@@ -1217,6 +1283,7 @@ function editorRutina(alumna) {
         ${ajuste(i, 'peso', 'Peso', formatoPeso(ej.peso))}
         ${ajuste(i, 'pausa', 'Pausa', formatoPausa(ej.pausa))}
       </div>
+      ${perfil.rol === 'profesor' ? zonaVideo(ej, i) : ''}
     </article>`).join('');
   return `${items || '<div class="tarjeta vacio">Este día no tiene ejercicios todavía.</div>'}
     ${ui.agregando ? selectorEjercicios(alumna) : '<button class="boton ancho" data-accion="abrir-agregar">+ Agregar ejercicio</button>'}`;
@@ -1407,16 +1474,16 @@ app.addEventListener('click', ev => {
       ui.agregando = false; ui.creando = false; ui.modoRutina = 'semanal'; ui.dia = new Date().getDay(); ui.fechaRutina = fechaISO();
       break;
     case 'pestana':
-      ui.entrenadorId = null; ui.nuevoEntrenador = false;
+      ui.entrenadorId = null; ui.nuevoEntrenador = false; ui.editandoVideo = null; ui.videoAbierto = '';
       ui.verAvisos = false; ui.editando = false; ui.eligiendoAlcance = false; ui.reemplazando = null;
       ui.pestana = v; ui.alumnaId = null; ui.agregando = false; ui.creando = false; ui.registrando = null;
       ui.dia = new Date().getDay(); ui.fecha = fechaISO(); ui.estrellas = 0; ui.comentario = '';
       break;
     case 'dia':
-      ui.dia = Number(v); ui.registrando = null;
+      ui.dia = Number(v); ui.registrando = null; ui.editandoVideo = null;
       break;
     case 'fecha-alumna': ui.fecha = v; ui.registrando = null; ui.editando = false; ui.eligiendoAlcance = false; ui.agregando = false;
-      ui.sensacion = null; ui.comentarioDia = ''; ui.editandoDiario = false; break;
+      ui.sensacion = null; ui.comentarioDia = ''; ui.editandoDiario = false; ui.videoAbierto = ''; break;
     case 'fecha-rutina': ui.fechaRutina = v; ui.agregando = false; break;
     case 'modo-rutina': ui.modoRutina = v; ui.agregando = false; ui.creando = false; break;
     case 'personalizar-fecha': {
@@ -1450,6 +1517,14 @@ app.addEventListener('click', ev => {
       mostrarAviso('Rutina guardada'); return;
     // Alumno: registrar
     case 'ver-ejercicio': ui.ejercicioGrafico = v; break;
+    case 'ver-video': ui.videoAbierto = ui.videoAbierto === v ? '' : v; break;
+    case 'editar-video': ui.editandoVideo = Number(v); ui.errorVideo = ''; break;
+    case 'cancelar-video': ui.editandoVideo = null; break;
+    case 'quitar-video':
+      delete datos.videos[v];
+      ui.editandoVideo = null;
+      servidor.guardarVideo(v, '', perfil.uid).catch(mostrarError);
+      mostrarAviso('Video quitado'); return;
     case 'sensacion': ui.sensacion = v; vibrar(15); break;
     case 'editar-diario': ui.editandoDiario = true; ui.sensacion = null; ui.comentarioDia = ''; break;
     case 'dia-profe': ui.diaProfe = v; break;
@@ -1650,6 +1725,17 @@ app.addEventListener('submit', ev => {
     servidor.avisarAlProfe(perfil.alumnaId,
       `${esRecord ? '🏆 Nuevo récord: ' : ''}${perfil.nombre} registró ${ej.nombre} (${fechaLarga(fecha)}): ${registro.series} × ${registro.reps} con ${formatoPeso(registro.peso)}.`, perfil.entrenadorUid)
       .catch(e => console.error(e));
+  }
+
+  if (f.dataset.form === 'video') {
+    const link = String(campos.get('link') || '').trim();
+    const video = leerVideo(link);
+    if (!video) { ui.errorVideo = 'Ese link no es de YouTube ni de TikTok. Copialo con el botón "Compartir" del video y pegalo acá.'; dibujar(); return; }
+    const nombre = f.dataset.nombre;
+    datos.videos[nombre] = video.link;
+    ui.editandoVideo = null; ui.errorVideo = '';
+    servidor.guardarVideo(nombre, video.link, perfil.uid).catch(mostrarError);
+    mostrarAviso(video.embebido ? `🎬 Video de ${video.sitio} guardado` : '🎬 Guardado. Como es un link corto de TikTok, se va a abrir en TikTok');
   }
 
   if (f.dataset.form === 'diario') {

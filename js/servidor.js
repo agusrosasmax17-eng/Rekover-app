@@ -20,8 +20,8 @@
    - alumnas/{id}/avisos        → notificaciones para el alumno
    - avisosProfe/{id}           → notificaciones para la administradora (de sus alumnos)
    - encuestas/{id}             → respuestas de la encuesta de satisfacción
-   - config/ejercicios          → ejercicios propios de la administradora
-   - config/ejercicios_{uid}    → ejercicios propios de cada entrenador
+   - config/ejercicios          → ejercicios propios y videos demostrativos de la administradora
+   - config/ejercicios_{uid}    → ejercicios propios y videos demostrativos de cada entrenador
 
    Por dentro la colección se sigue llamando "alumnas" para no perder los datos
    ya cargados, pero en la app se muestra "alumnos".
@@ -73,7 +73,7 @@ export async function ingresar(usuario, clave, tipo) {
 export function salir() { return signOut(auth); }
 
 function datosVacios() {
-  return { alumnas: [], rutinas: {}, cambios: {}, registros: [], diario: {}, encuestas: [], notasProgreso: {}, ejerciciosPropios: {}, evaluaciones: {}, entrenadores: [] };
+  return { alumnas: [], rutinas: {}, cambios: {}, registros: [], diario: {}, encuestas: [], notasProgreso: {}, ejerciciosPropios: {}, videos: {}, evaluaciones: {}, entrenadores: [] };
 }
 
 function sumarAlumna(datos, d) {
@@ -124,7 +124,7 @@ export async function cargar(usuario) {
     alumnas.forEach(d => sumarAlumna(datos, d));
     datos.alumnas.sort(porNombre);
     datos.encuestas = encuestas.docs.map(d => d.data()).sort(porFecha);
-    if (ejercicios.exists()) datos.ejerciciosPropios = ejercicios.data().lista || {};
+    if (ejercicios.exists()) { datos.ejerciciosPropios = ejercicios.data().lista || {}; datos.videos = ejercicios.data().videos || {}; }
     datos.entrenadores = entrenadores.docs.map(d => ({ uid: d.id, ...d.data() })).sort(porNombre);
     return { perfil: { rol: 'profesor', esAdmin: true, nombre: NOMBRE_PROFESOR, uid: '' }, datos };
   }
@@ -141,7 +141,7 @@ export async function cargar(usuario) {
     alumnas.forEach(d => sumarAlumna(datos, d));
     datos.alumnas.sort(porNombre);
     datos.encuestas = encuestas.docs.map(d => d.data()).sort(porFecha);
-    if (ejercicios.exists()) datos.ejerciciosPropios = ejercicios.data().lista || {};
+    if (ejercicios.exists()) { datos.ejerciciosPropios = ejercicios.data().lista || {}; datos.videos = ejercicios.data().videos || {}; }
     return { perfil: { rol: 'profesor', esAdmin: false, nombre: e.nombre, uid: usuario.uid, debeCambiarClave: !!e.debeCambiarClave }, datos };
   }
 
@@ -156,7 +156,7 @@ export async function cargar(usuario) {
     getDocs(query(collection(db, 'encuestas'), where('uid', '==', usuario.uid))),
     getDoc(doc(db, 'config', idEjercicios(alumna.entrenadorUid)))
   ]);
-  if (ejercicios.exists()) datos.ejerciciosPropios = ejercicios.data().lista || {};
+  if (ejercicios.exists()) { datos.ejerciciosPropios = ejercicios.data().lista || {}; datos.videos = ejercicios.data().videos || {}; }
   const leidos = leerRegistros(ficha.id, registros.docs);
   datos.registros = leidos.registros;
   datos.diario[ficha.id] = leidos.diario;
@@ -279,8 +279,15 @@ export function agregarEncuesta(encuesta) {
   return addDoc(collection(db, 'encuestas'), { ...encuesta, uid: auth.currentUser.uid });
 }
 
+// "merge" para no borrar los videos que están en el mismo documento
 export function guardarEjerciciosPropios(lista, entrenadorUid) {
-  return setDoc(doc(db, 'config', idEjercicios(entrenadorUid)), { lista });
+  return setDoc(doc(db, 'config', idEjercicios(entrenadorUid)), { lista }, { merge: true });
+}
+
+// Video demostrativo de un ejercicio (YouTube o TikTok). Vale para todos los alumnos de ese entrenador.
+// url vacía = quitar el video.
+export function guardarVideo(nombreEjercicio, url, entrenadorUid) {
+  return setDoc(doc(db, 'config', idEjercicios(entrenadorUid)), { videos: { [nombreEjercicio]: url || deleteField() } }, { merge: true });
 }
 
 /* ---------- Notificaciones (la campanita) ---------- */
